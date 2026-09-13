@@ -142,7 +142,6 @@ drop trigger if exists trg_matricule on public.lecteurs;
 create trigger trg_matricule
   before insert on public.lecteurs
   for each row
-  when (matricule is null or matricule = '')
   execute function public.gen_matricule();
 
 -- Historique des grades (permanente, jamais supprimée)
