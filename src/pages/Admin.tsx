@@ -233,6 +233,7 @@ export default function Admin() {
               <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="px-4 py-3">Nom</th>
+                  <th className="px-4 py-3">Identifiant</th>
                   <th className="px-4 py-3">Rôle</th>
                   <th className="px-4 py-3">Créé le</th>
                   <th className="px-4 py-3 text-right">Actions</th>
@@ -246,6 +247,9 @@ export default function Admin() {
                       {c.id === profile?.id && (
                         <span className="ml-1 text-xs text-cdlj">(vous)</span>
                       )}
+                    </td>
+                    <td className="px-4 py-2 font-mono text-xs text-cdlj">
+                      {c.username ?? '—'}
                     </td>
                     <td className="px-4 py-2">
                       {c.role ? (

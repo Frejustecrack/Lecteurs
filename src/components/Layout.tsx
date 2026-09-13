@@ -3,6 +3,13 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { ROLE_LABELS, type Role } from '../lib/types';
+import {
+  BtnPrimary,
+  Field,
+  inputCls,
+  Modal,
+  useToast,
+} from './ui';
 
 const NAV: { to: string; label: string; icon: string; roles?: Role[] }[] = [
   { to: '/', label: 'Accueil', icon: '🏠' },
@@ -36,7 +43,14 @@ function Logo() {
 export default function Layout() {
   const { profile, user } = useAuth();
   const [open, setOpen] = useState(false);
+  const [pwOpen, setPwOpen] = useState(false);
+  const [pwForm, setPwForm] = useState({ p1: '', p2: '' });
+  const [pwBusy, setPwBusy] = useState(false);
   const navigate = useNavigate();
+  const { toast } = useToast();
+
+  const displayUser =
+    profile?.username ?? user?.phone ?? user?.email ?? 'Utilisateur';
 
   const items = NAV.filter(
     (n) => !n.roles || (profile?.role && n.roles.includes(profile.role))
@@ -46,6 +60,52 @@ export default function Layout() {
     await supabase.auth.signOut();
     navigate('/login');
   }
+
+  async function changePassword() {
+    if (pwForm.p1.length < 8) {
+      toast('Le nouveau mot de passe doit faire au moins 8 caractères.', 'err');
+      return;
+    }
+    if (pwForm.p1 !== pwForm.p2) {
+      toast('Les deux mots de passe ne correspondent pas.', 'err');
+      return;
+    }
+    setPwBusy(true);
+    const { error } = await supabase.auth.updateUser({ password: pwForm.p1 });
+    setPwBusy(false);
+    if (error) {
+      toast(error.message, 'err');
+    } else {
+      setPwOpen(false);
+      setPwForm({ p1: '', p2: '' });
+      toast('Mot de passe modifié.');
+    }
+  }
+
+  const userFooter = (
+    <div className="border-t border-slate-200 pt-3">
+      <div className="truncate text-sm font-semibold text-slate-700" title={profile?.full_name ?? undefined}>
+        {displayUser}
+      </div>
+      <div className="mb-2 text-xs text-slate-500">
+        {profile?.role ? ROLE_LABELS[profile.role] : '—'}
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={() => setPwOpen(true)}
+          className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+        >
+          Mot de passe
+        </button>
+        <button
+          onClick={logout}
+          className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+        >
+          Déconnexion
+        </button>
+      </div>
+    </div>
+  );
 
   const navContent = (
     <>
@@ -76,20 +136,7 @@ export default function Layout() {
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-slate-200 bg-white p-4 lg:flex">
         <Logo />
         <nav className="mt-6 flex flex-1 flex-col gap-1 overflow-y-auto">{navContent}</nav>
-        <div className="border-t border-slate-200 pt-3">
-          <div className="truncate text-sm font-semibold text-slate-700">
-            {profile?.full_name ?? user?.email}
-          </div>
-          <div className="mb-2 text-xs text-slate-500">
-            {profile?.role ? ROLE_LABELS[profile.role] : '—'}
-          </div>
-          <button
-            onClick={logout}
-            className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
-          >
-            Se déconnecter
-          </button>
-        </div>
+        {userFooter}
       </aside>
 
       {/* Header mobile */}
@@ -123,9 +170,7 @@ export default function Layout() {
             <div className="absolute left-0 top-0 flex h-full w-72 flex-col bg-white p-4 shadow-xl">
               <Logo />
               <nav className="mt-6 flex flex-1 flex-col gap-1 overflow-y-auto">{navContent}</nav>
-              <div className="border-t border-slate-200 pt-3 text-sm text-slate-500">
-                {profile?.full_name ?? user?.email}
-              </div>
+              {userFooter}
             </div>
           </div>
         )}
@@ -134,6 +179,40 @@ export default function Layout() {
           <Outlet />
         </main>
       </div>
+
+      <Modal
+        open={pwOpen}
+        onClose={() => setPwOpen(false)}
+        title="Changer mon mot de passe"
+      >
+        <div className="space-y-4">
+          <Field label="Nouveau mot de passe">
+            <input
+              type="password"
+              className={inputCls}
+              value={pwForm.p1}
+              onChange={(e) => setPwForm({ ...pwForm, p1: e.target.value })}
+              placeholder="8 caractères minimum"
+            />
+          </Field>
+          <Field label="Confirmer le nouveau mot de passe">
+            <input
+              type="password"
+              className={inputCls}
+              value={pwForm.p2}
+              onChange={(e) => setPwForm({ ...pwForm, p2: e.target.value })}
+            />
+          </Field>
+          <p className="text-xs text-slate-400">
+            Votre identifiant ({displayUser}) reste fixe et ne change pas.
+          </p>
+          <div className="flex justify-end gap-2">
+            <BtnPrimary onClick={changePassword} disabled={pwBusy}>
+              {pwBusy ? 'Enregistrement…' : 'Enregistrer'}
+            </BtnPrimary>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

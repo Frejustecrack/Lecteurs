@@ -6,7 +6,7 @@ import { BtnPrimary, Field, inputCls } from '../components/ui';
 
 export default function Login() {
   const { user, profile, loading } = useAuth();
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -18,15 +18,16 @@ export default function Login() {
     setError(null);
     setBusy(true);
     try {
+      // « Sign in with username » : l'identifiant est transmis via le champ phone
       const { error: err } = await supabase.auth.signInWithPassword({
-        email,
+        phone: username.trim(),
         password,
       });
       if (err) {
         setError(
           err.message === 'Invalid login credentials'
-            ? 'Email ou mot de passe incorrect.'
-            : err.message
+            ? 'Identifiant ou mot de passe incorrect.'
+            : 'Connexion impossible : ' + err.message
         );
       }
     } finally {
@@ -57,15 +58,15 @@ export default function Login() {
           className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
         >
           <div className="space-y-4">
-            <Field label="Adresse email">
+            <Field label="Identifiant">
               <input
-                type="email"
                 required
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="username"
+                autoCapitalize="none"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
                 className={inputCls}
-                placeholder="nom@exemple.com"
+                placeholder="votre identifiant"
               />
             </Field>
             <Field label="Mot de passe">

@@ -3,6 +3,7 @@ export type Role = 'admin' | 'co' | 'caissier' | 'responsable';
 export interface Profile {
   id: string;
   full_name: string | null;
+  username: string | null;
   role: Role | null;
   created_at: string;
 }

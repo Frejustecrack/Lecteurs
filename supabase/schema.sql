@@ -38,6 +38,7 @@ on conflict (id) do nothing;
 create table if not exists public.profiles (
   id         uuid primary key references auth.users (id) on delete cascade,
   full_name  text,
+  username   text,
   role       text check (role in ('admin', 'co', 'caissier', 'responsable')),
   created_at timestamptz not null default now()
 );
@@ -48,8 +49,12 @@ returns trigger
 language plpgsql security definer set search_path = public
 as $$
 begin
-  insert into public.profiles (id, full_name)
-  values (new.id, coalesce(new.raw_user_meta_data ->> 'full_name', new.email));
+  insert into public.profiles (id, full_name, username)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data ->> 'full_name', new.raw_user_meta_data ->> 'username', new.email),
+    new.raw_user_meta_data ->> 'username'
+  );
   return new;
 end;
 $$;
