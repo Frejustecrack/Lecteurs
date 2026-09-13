@@ -4,6 +4,10 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { BtnPrimary, Field, inputCls } from '../components/ui';
 
+// Domaines internes réservés aux identifiants CDLJ (jamais utilisé pour l'envoi
+// d'emails : les comptes sont créés directement par l'administrateur).
+const USERNAME_DOMAIN = '@lecteurs.cdlj';
+
 export default function Login() {
   const { user, profile, loading } = useAuth();
   const [username, setUsername] = useState('');
@@ -18,9 +22,10 @@ export default function Login() {
     setError(null);
     setBusy(true);
     try {
-      // « Sign in with username » : l'identifiant est transmis via le champ phone
+      // L'utilisateur ne saisit que son identifiant ; l'application le mappe
+      // vers l'identifiant interne de l'authentification.
       const { error: err } = await supabase.auth.signInWithPassword({
-        phone: username.trim(),
+        email: username.trim().toLowerCase() + USERNAME_DOMAIN,
         password,
       });
       if (err) {
