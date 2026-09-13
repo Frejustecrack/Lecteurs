@@ -216,8 +216,8 @@ create or replace function public.dernier_samedi()
 returns date language sql stable as $$
   select case
            when extract(isodow from current_date) >= 6
-             then (date_trunc('week', current_date) + 5)::date
-           else (date_trunc('week', current_date) - 2)::date
+             then date_trunc('week', current_date)::date + 5
+           else date_trunc('week', current_date)::date - 2
          end;
 $$;
 
