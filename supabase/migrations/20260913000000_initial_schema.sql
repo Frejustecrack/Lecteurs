@@ -2,15 +2,13 @@
 -- CDLJ — Application de Gestion "Lecteurs, sel et lumière nous sommes"
 -- Paroisse Sainte Famille d'Akogbato — Archidiocèse de Cotonou (Bénin)
 --
--- SCHÉMA DE BASE DE DONNÉES COMPLET (PostgreSQL / Supabase)
+-- MIGRATION INITIALE — SCHÉMA COMPLET (13 tables, RLS, triggers, logs)
 --
--- COMMENÇER ICI :
--- 1. Ouvre le dashboard de ton projet Supabase
--- 2. Menu SQL Editor → New query → colle ce fichier ENTIÈREMENT
--- 3. Clique sur RUN (un seul passage suffit, le script est ré-exécutable)
+-- Mode normal (intégration GitHub active) : rien à faire — cette migration
+-- est appliquée automatiquement par Supabase lors du push.
 --
--- Ensuite : crée les comptes utilisateurs (Auth → Users) puis exécute les
--- instructions de la fin de ce fichier pour leur attribuer un rôle.
+-- NB : cette migration a déjà été exécutée manuellement sur la base de
+-- production le 13/09/2026. Le script est idempotent (ré-exécutable).
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
