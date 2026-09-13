@@ -301,7 +301,8 @@ begin
   select montant_participation into v_participe
     from public.evenements where id = new.event_id;
   if v_total > v_participe then
-    raise exception 'Total payé (' || v_total || ') supérieur au montant de participation (' || v_participe || ')';
+    raise exception 'Total payé (%@) supérieur au montant de participation (%@)',
+      v_total, v_participe;
   end if;
   return new;
 end;
@@ -671,7 +672,7 @@ returns void language plpgsql security definer set search_path = public
 as $$
 begin
   if p_role not in ('admin', 'co', 'caissier', 'responsable') then
-    raise exception 'Rôle invalide : %', p_role;
+    raise exception 'Rôle invalide : %@', p_role;
   end if;
   insert into public.profiles (id, role, full_name)
   values (p_user, p_role, p_full_name)
