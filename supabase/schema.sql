@@ -301,8 +301,7 @@ begin
   select montant_participation into v_participe
     from public.evenements where id = new.event_id;
   if v_total > v_participe then
-    raise exception 'Total payé ( %@ ) supérieur au montant de participation ( %@ )',
-      v_total, v_participe;
+    raise exception 'Total payé (' || v_total || ') supérieur au montant de participation (' || v_participe || ')';
   end if;
   return new;
 end;
