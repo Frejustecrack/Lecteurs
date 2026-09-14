@@ -20,7 +20,8 @@ import {
 
 export default function Fraternites() {
   const { profile } = useAuth();
-  const canManage = profile?.role === 'admin' || profile?.role === 'co';
+  const canEdit = profile?.role === 'admin' || profile?.role === 'co';
+  const canDelete = !!profile?.role; // tout utilisateur connecté peut supprimer une fraternité vide
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -45,6 +46,24 @@ export default function Fraternites() {
 
   useEffect(() => {
     load();
+  }, [load]);
+
+  // Synchronisation temps réel
+  useEffect(() => {
+    const ch = supabase
+      .channel('realtime-fraternites')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'fraternites' }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lecteurs' }, () => load())
+      .subscribe();
+    const onFocus = () => load();
+    const onVis = () => { if (document.visibilityState === 'visible') load(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVis);
+      supabase.removeChannel(ch);
+    };
   }, [load]);
 
   function openCreate() {
@@ -145,21 +164,25 @@ export default function Fraternites() {
                       <Badge tone="blue">{membres.length} lecteur(s)</Badge>
                     </div>
                   </div>
-                  {canManage && (
+                  {(canEdit || canDelete) && (
                     <div className="flex gap-2 text-xs font-semibold">
-                      <button
-                        onClick={() => openEdit(f)}
-                        className={`text-cdlj hover:underline ${pressCls}`}
-                      >
-                        Modifier
-                      </button>
-                      <button
-                        onClick={() => supprimer(f)}
-                        disabled={busySuppr === f.id}
-                        className={`text-alerte hover:underline ${pressCls}`}
-                      >
-                        {busySuppr === f.id ? 'Suppression…' : 'Supprimer'}
-                      </button>
+                      {canEdit && (
+                        <button
+                          onClick={() => openEdit(f)}
+                          className={`text-cdlj hover:underline ${pressCls}`}
+                        >
+                          Modifier
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button
+                          onClick={() => supprimer(f)}
+                          disabled={busySuppr === f.id}
+                          className={`text-alerte hover:underline ${pressCls}`}
+                        >
+                          {busySuppr === f.id ? 'Suppression…' : 'Supprimer'}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

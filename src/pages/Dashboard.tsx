@@ -55,6 +55,26 @@ export default function Dashboard() {
     load();
   }, []);
 
+  // Synchronisation temps réel : toute modif de présence/cotisation/lecteur recharge le tableau de bord
+  useEffect(() => {
+    const ch = supabase
+      .channel('realtime-dashboard')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'presences' }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cotisations' }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lecteurs' }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'caisse_operations' }, () => load())
+      .subscribe();
+    const onFocus = () => load();
+    const onVis = () => { if (document.visibilityState === 'visible') load(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVis);
+      supabase.removeChannel(ch);
+    };
+  }, []);
+
   async function load() {
     const now = new Date();
     const am = now.getFullYear();

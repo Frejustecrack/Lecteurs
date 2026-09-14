@@ -137,6 +137,28 @@ export default function Suivis() {
     load().finally(() => setLoading(false));
   }, [load]);
 
+  // Synchronisation temps réel : toute modification de présence est reflétée dans le récap
+  useEffect(() => {
+    const channel = supabase
+      .channel('realtime-suivis')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'presences' }, () => {
+        load();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lecteurs' }, () => {
+        load();
+      })
+      .subscribe();
+    const onFocus = () => load();
+    const onVis = () => { if (document.visibilityState === 'visible') load(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVis);
+      supabase.removeChannel(channel);
+    };
+  }, [load]);
+
   // Le samedi sélectionné doit rester dans la période courante.
   useEffect(() => {
     if (samediChoisi && !samedisPeriode.includes(samediChoisi)) setSamediChoisi('');
