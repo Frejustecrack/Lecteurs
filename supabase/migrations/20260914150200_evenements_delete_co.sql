@@ -2,16 +2,11 @@
 -- Le CDC prévoit que le CO crée/gère les événements ; la suppression manquait au RLS
 
 -- 1) Élargir la contrainte de rôle pour accepter 'co_paroissial' (alias de 'co')
-do $$
-declare
-  cname text;
-begin
-  select conname into cname from pg_constraint
-  where conrelid = 'public.profiles'::regclass and contype = 'c' and pg_get_constraintdef(oid) like '%role in%';
-  if cname is not null then
-    execute format('alter table public.profiles drop constraint %I', cname);
-  end if;
-end $$;
+-- DROP IF EXISTS : si la migration est rejouée (ou appliquée sur une base où la
+-- contrainte porte déjà ce nom), l'ancien bloc DO $$ … like '%role in%' laissait
+-- parfois subsister une contrainte héritée plus restrictive, qui continuait de
+-- rejeter 'co_paroissial' alors que la nouvelle contrainte l'autorisait.
+alter table public.profiles drop constraint if exists profiles_role_check;
 alter table public.profiles add constraint profiles_role_check
   check (role in ('admin','co','co_paroissial','caissier','responsable'));
 

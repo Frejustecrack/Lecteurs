@@ -6,10 +6,11 @@ import { ROLE_LABELS, type Role } from '../lib/types';
 import { traduireErreur } from '../lib/errors';
 import {
   BtnPrimary,
+  EyeToggle,
   Field,
-  inputCls,
   Modal,
   pressCls,
+  pwInputCls,
   useToast,
 } from './ui';
 
@@ -49,6 +50,16 @@ export default function Layout() {
   const [pwOpen, setPwOpen] = useState(false);
   const [pwForm, setPwForm] = useState({ p1: '', p2: '' });
   const [pwBusy, setPwBusy] = useState(false);
+  /** Œil : révélation indépendante des deux champs du formulaire. */
+  const [showPw1, setShowPw1] = useState(false);
+  const [showPw2, setShowPw2] = useState(false);
+
+  /** Ferme la modale et re-masque les mots de passe (jamais laissés visibles). */
+  function closePwModal() {
+    setPwOpen(false);
+    setShowPw1(false);
+    setShowPw2(false);
+  }
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -206,7 +217,7 @@ export default function Layout() {
 
       <Modal
         open={pwOpen}
-        onClose={() => setPwOpen(false)}
+        onClose={closePwModal}
         title="Changer mon mot de passe"
       >
         <div className="space-y-4">
@@ -214,27 +225,41 @@ export default function Layout() {
             Votre identifiant <span className="font-mono font-semibold text-cdlj">{displayUser}</span> est fixe — seul le mot de passe peut être modifié. 8 caractères minimum.
           </div>
           <Field label="Nouveau mot de passe">
-            <input
-              type="password"
-              className={inputCls}
-              value={pwForm.p1}
-              onChange={(e) => setPwForm({ ...pwForm, p1: e.target.value })}
-              placeholder="••••••••"
-              autoComplete="new-password"
-            />
+            <div className="relative">
+              <input
+                type={showPw1 ? 'text' : 'password'}
+                className={pwInputCls}
+                value={pwForm.p1}
+                onChange={(e) => setPwForm({ ...pwForm, p1: e.target.value })}
+                placeholder="••••••••"
+                autoComplete="new-password"
+              />
+              <EyeToggle
+                shown={showPw1}
+                onToggle={() => setShowPw1((v) => !v)}
+                label={showPw1 ? 'Masquer le nouveau mot de passe' : 'Afficher le nouveau mot de passe'}
+              />
+            </div>
           </Field>
           <Field label="Confirmer le nouveau mot de passe">
-            <input
-              type="password"
-              className={inputCls}
-              value={pwForm.p2}
-              onChange={(e) => setPwForm({ ...pwForm, p2: e.target.value })}
-              placeholder="••••••••"
-              autoComplete="new-password"
-            />
+            <div className="relative">
+              <input
+                type={showPw2 ? 'text' : 'password'}
+                className={pwInputCls}
+                value={pwForm.p2}
+                onChange={(e) => setPwForm({ ...pwForm, p2: e.target.value })}
+                placeholder="••••••••"
+                autoComplete="new-password"
+              />
+              <EyeToggle
+                shown={showPw2}
+                onToggle={() => setShowPw2((v) => !v)}
+                label={showPw2 ? 'Masquer la confirmation' : 'Afficher la confirmation'}
+              />
+            </div>
           </Field>
           <div className="flex justify-end gap-2 pt-1">
-            <button onClick={() => setPwOpen(false)} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Annuler</button>
+            <button onClick={closePwModal} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Annuler</button>
             <BtnPrimary onClick={changePassword} busy={pwBusy} busyLabel="Enregistrement…">
               Enregistrer
             </BtnPrimary>
