@@ -106,13 +106,13 @@ export function StatCard({
   };
   return (
     <div
-      className={`rounded-xl border border-slate-200 border-l-4 bg-white p-4 shadow-sm ${border[tone]}`}
+      className={`group rounded-2xl border border-slate-200/70 border-l-4 bg-white p-4 shadow-sm backdrop-blur-sm transition-all duration-200 hover:shadow-md hover:-translate-y-[1px] hover:border-slate-300 ${border[tone]}`}
     >
       <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
         {label}
       </div>
-      <div className="mt-1 text-2xl font-bold text-slate-800">{value}</div>
-      {sub && <div className="mt-0.5 text-xs text-slate-500">{sub}</div>}
+      <div className="mt-1 text-2xl font-bold tracking-tight text-slate-800">{value}</div>
+      {sub && <div className="mt-0.5 text-xs leading-relaxed text-slate-500">{sub}</div>}
     </div>
   );
 }
@@ -133,9 +133,9 @@ export function Modal({
 }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-40 flex items-end sm:items-center justify-center">
+    <div className="fixed inset-0 z-40 flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div
-        className="absolute inset-0 bg-slate-900/40"
+        className="cdlj-backdrop absolute inset-0 bg-slate-900/30 backdrop-blur-sm"
         onClick={onClose}
         aria-hidden
       />
@@ -143,7 +143,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`cdlj-modal relative z-10 max-h-[92vh] w-full overflow-y-auto rounded-t-2xl bg-white p-5 shadow-xl sm:rounded-2xl ${
+        className={`cdlj-modal relative z-10 max-h-[92vh] w-full overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl ring-1 ring-slate-200 sm:rounded-2xl ${
           wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'
         }`}
       >
@@ -191,7 +191,7 @@ export function Field({
 }
 
 export const inputCls =
-  'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-cdlj focus:outline-none focus:ring-2 focus:ring-cdlj/20';
+  'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm placeholder:text-slate-400 focus:border-cdlj focus:outline-none focus:ring-2 focus:ring-cdlj/20 focus:shadow-md transition-all';
 
 /**
  * Classes de « retour au clic » partagées par tous les boutons de l'application :
@@ -200,11 +200,11 @@ export const inputCls =
  *  - `focus-visible:ring` → repère clavier visible sans polluer le clic souris.
  */
 export const pressCls =
-  'select-none touch-manipulation transition-[transform,box-shadow,background-color,color] duration-150 ease-out active:scale-[0.96] active:duration-75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cdlj/45 focus-visible:ring-offset-1 disabled:pointer-events-none disabled:opacity-50';
+  'select-none touch-manipulation will-change-transform transition-[transform,box-shadow,background-color,color,border-color] duration-150 ease-out active:scale-[0.96] active:duration-75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cdlj/45 focus-visible:ring-offset-1 disabled:pointer-events-none disabled:opacity-50';
 
 /** Petit bouton « icône » (flèches de mois, fermeture…) avec le même ressenti. */
 export const iconPressCls =
-  'select-none touch-manipulation rounded-lg border border-slate-200 bg-white transition-all duration-150 ease-out hover:bg-slate-50 active:scale-[0.9] active:duration-75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cdlj/45 disabled:pointer-events-none disabled:opacity-40';
+  'select-none touch-manipulation rounded-xl border border-slate-200 bg-white shadow-sm transition-all duration-150 ease-out hover:bg-slate-50 hover:shadow hover:border-slate-300 active:scale-[0.92] active:duration-75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cdlj/45 disabled:pointer-events-none disabled:opacity-40';
 
 /** Petit spinner blanc/bleu affiché dans un bouton occupé. */
 export function BtnSpinner({ tone = 'light' }: { tone?: 'light' | 'dark' }) {
@@ -253,7 +253,7 @@ export function BtnPrimary({
       {...props}
       disabled={disabled || busy}
       aria-busy={busy || undefined}
-      className={`rounded-lg bg-cdlj px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-cdlj-dark active:shadow-none ${pressCls} ${props.className ?? ''}`}
+      className={`rounded-xl bg-gradient-to-br from-cdlj to-cdlj-dark px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-cdlj/20 ring-1 ring-cdlj/10 hover:shadow-md hover:from-cdlj-dark hover:to-cdlj active:shadow-none ${pressCls} ${props.className ?? ''}`}
     >
       <Contenu busy={busy} busyLabel={busyLabel} tone="light">
         {children}
@@ -274,7 +274,7 @@ export function BtnGhost({
       {...props}
       disabled={disabled || busy}
       aria-busy={busy || undefined}
-      className={`rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 active:bg-slate-100 ${pressCls} ${props.className ?? ''}`}
+      className={`rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 hover:border-slate-300 hover:shadow active:bg-slate-100 ${pressCls} ${props.className ?? ''}`}
     >
       <Contenu busy={busy} busyLabel={busyLabel} tone="dark">
         {children}
@@ -295,7 +295,7 @@ export function BtnDanger({
       {...props}
       disabled={disabled || busy}
       aria-busy={busy || undefined}
-      className={`rounded-lg bg-alerte px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 active:shadow-none ${pressCls} ${props.className ?? ''}`}
+      className={`rounded-xl bg-alerte px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-alerte/20 ring-1 ring-alerte/10 hover:opacity-95 hover:shadow active:shadow-none ${pressCls} ${props.className ?? ''}`}
     >
       <Contenu busy={busy} busyLabel={busyLabel} tone="light">
         {children}
@@ -307,8 +307,10 @@ export function BtnDanger({
 // ---------------------------------------------------------------- Divers
 export function EmptyState({ msg }: { msg: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-slate-300 bg-white/60 p-10 text-center text-sm text-slate-500">
-      {msg}
+    <div className="rounded-2xl border border-dashed border-slate-300 bg-white/70 p-10 text-center backdrop-blur-sm">
+      <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-400">∅</div>
+      <div className="mt-3 text-sm font-medium text-slate-600">{msg}</div>
+      <div className="mt-1 text-xs text-slate-400">Aucune donnée à afficher pour cette vue.</div>
     </div>
   );
 }
@@ -323,12 +325,12 @@ export function PageHeader({
   actions?: ReactNode;
 }) {
   return (
-    <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h1 className="text-xl font-bold text-slate-800 sm:text-2xl">{title}</h1>
-        {sub && <p className="mt-0.5 text-sm text-slate-500">{sub}</p>}
+    <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0">
+        <h1 className="text-xl font-extrabold tracking-tight text-slate-800 sm:text-2xl">{title}</h1>
+        {sub && <p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-500">{sub}</p>}
       </div>
-      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      {actions && <div className="flex flex-wrap items-center gap-2 shrink-0">{actions}</div>}
     </div>
   );
 }
@@ -349,11 +351,11 @@ export function Segmented<T extends string>({
   onChange: (v: T) => void;
   size?: 'sm' | 'md';
 }) {
-  const pad = size === 'sm' ? 'px-2.5 py-1 text-xs' : 'px-4 py-1.5 text-sm';
+  const pad = size === 'sm' ? 'px-2.5 py-1 text-xs' : 'px-3.5 py-1.5 text-sm';
   return (
     <div
       role="tablist"
-      className="inline-flex w-full rounded-lg border border-slate-200 bg-white p-0.5 sm:w-auto"
+      className="inline-flex w-full rounded-xl border border-slate-200 bg-slate-50 p-1 shadow-inner sm:w-auto"
     >
       {options.map((o) => {
         const actif = o.value === value;
@@ -363,8 +365,8 @@ export function Segmented<T extends string>({
             role="tab"
             aria-selected={actif}
             onClick={() => onChange(o.value)}
-            className={`${pressCls} ${pad} flex-1 whitespace-nowrap rounded-md font-semibold sm:flex-none ${
-              actif ? 'bg-cdlj text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+            className={`${pressCls} ${pad} flex-1 whitespace-nowrap rounded-lg font-semibold sm:flex-none transition-all ${
+              actif ? 'bg-cdlj text-white shadow-sm shadow-cdlj/20' : 'text-slate-600 hover:text-slate-800 hover:bg-white/60'
             }`}
           >
             {o.icon ? <span className="mr-1">{o.icon}</span> : null}

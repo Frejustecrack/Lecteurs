@@ -1,4 +1,4 @@
-export type Role = 'admin' | 'co' | 'caissier' | 'responsable';
+export type Role = 'admin' | 'co' | 'co_paroissial' | 'caissier' | 'responsable';
 
 export interface Profile {
   id: string;
@@ -135,6 +135,7 @@ export interface LogEntry {
 export const ROLE_LABELS: Record<Role, string> = {
   admin: 'Administrateur',
   co: 'Chargé des Opérations',
+  co_paroissial: 'Chargé des Opérations',
   caissier: 'Caissier',
   responsable: 'Responsable',
 };

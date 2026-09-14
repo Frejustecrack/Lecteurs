@@ -39,7 +39,7 @@ export default function EvenementDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { profile } = useAuth();
-  const isCO = profile?.role === 'co';
+  const isCO = profile?.role === 'co' || profile?.role === 'co_paroissial';
   const isAdmin = profile?.role === 'admin';
   const { toast } = useToast();
 
@@ -65,6 +65,7 @@ export default function EvenementDetail() {
   const [busyEdit, setBusyEdit] = useState(false);
   const [busyStatut, setBusyStatut] = useState(false);
   const [busyPdf, setBusyPdf] = useState(false);
+  const [busyDelete, setBusyDelete] = useState(false);
   const [formEdit, setFormEdit] = useState({
     nom: '',
     date_evenement: '',
@@ -292,6 +293,30 @@ export default function EvenementDetail() {
     }
   }
 
+  async function supprimerEvenement() {
+    if (!e || (!isCO && !isAdmin)) {
+      toast("Seul le Chargé des Opérations ou l'Administrateur peut supprimer un événement.", 'err');
+      return;
+    }
+    if (!confirm(`Supprimer définitivement l'événement « ${e.nom} » ?\n\nParticipants, paiements et caisse liée seront supprimés (cascade). Cette action est irréversible.`)) return;
+    if (!confirm('Confirmation finale : supprimer ?')) return;
+    setBusyDelete(true);
+    const { error } = await supabase.from('evenements').delete().eq('id', e.id);
+    setBusyDelete(false);
+    if (error) {
+      toast(traduireErreur(error, "supprimer cet événement"), 'err');
+      return;
+    }
+    await supabase.rpc('log_action', {
+      p_action: 'evenement.suppression',
+      p_objet_type: 'evenements',
+      p_objet_ref: e.id,
+      p_detail: JSON.stringify({ nom: e.nom }),
+    });
+    toast('Événement supprimé.');
+    navigate('/evenements');
+  }
+
   async function ajouterOp() {
     if (!isCO) {
       toast(
@@ -402,8 +427,6 @@ export default function EvenementDetail() {
             {enCours && (isCO || isAdmin) && (
               <BtnGhost onClick={openEdit}>Modifier</BtnGhost>
             )}
-            {/* Cahier des charges §17 : le bilan d'événement est exportable
-                par l'Admin et le CO uniquement. */}
             {(isAdmin || isCO) && (
               <BtnGhost onClick={exportPdf} busy={busyPdf} busyLabel="PDF…">
                 ⬇ PDF bilan
@@ -421,6 +444,11 @@ export default function EvenementDetail() {
                   Réouvrir (Admin)
                 </BtnGhost>
               )
+            )}
+            {(isCO || isAdmin) && (
+              <BtnDanger onClick={supprimerEvenement} busy={busyDelete} busyLabel="Suppression…">
+                Supprimer
+              </BtnDanger>
             )}
           </>
         }

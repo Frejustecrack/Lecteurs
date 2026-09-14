@@ -14,17 +14,51 @@ body,
   height: 100%;
 }
 
+html {
+  scroll-behavior: smooth;
+  scrollbar-gutter: stable;
+}
+
 body {
-  background: var(--color-fond);
+  background: linear-gradient(180deg, var(--color-fond) 0%, #eef2ff 100%);
+  background-attachment: fixed;
   color: #1f2937;
   font-family: var(--font-sans);
   -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Scrollbar raffinée */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 #f1f5f9;
+}
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+*::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
 
 /* Les tableaux ne doivent jamais élargir la page sur mobile : c'est la
    cellule de défilement (overflow-x-auto) qui absorbe le dépassement. */
 table {
   max-width: 100%;
+}
+
+/* Cartes et surfaces : transition douce */
+.rounded-xl {
+  transition: box-shadow 180ms ease, transform 180ms ease, border-color 180ms ease;
 }
 
 /* Apparition des notifications (toast) */
@@ -41,6 +75,7 @@ table {
 
 .cdlj-toast {
   animation: cdlj-toast-in 180ms ease-out both;
+  backdrop-filter: blur(8px);
 }
 
 /* Apparition des fenêtres modales */
@@ -56,16 +91,57 @@ table {
 }
 
 .cdlj-modal {
-  animation: cdlj-modal-in 180ms ease-out both;
+  animation: cdlj-modal-in 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Drawer mobile : glissement */
+@keyframes cdlj-drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes cdlj-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.cdlj-drawer {
+  animation: cdlj-drawer-in 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.cdlj-backdrop {
+  animation: cdlj-backdrop-in 200ms ease-out both;
+  backdrop-filter: blur(2px);
+}
+
+/* Shimmer pour les skeletons (optionnel) */
+@keyframes cdlj-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.cdlj-shimmer {
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: cdlj-shimmer 1.4s infinite;
 }
 
 /* Accessibilité : pas d'animation pour les utilisateurs qui la refusent. */
 @media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
   .cdlj-toast,
-  .cdlj-modal {
+  .cdlj-modal,
+  .cdlj-drawer,
+  .cdlj-backdrop {
     animation: none;
   }
-  button {
+  button, a {
     transition: none !important;
   }
+}
+
+/* Focus visible plus doux */
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-cdlj) 45%, transparent);
+  outline-offset: 2px;
 }
