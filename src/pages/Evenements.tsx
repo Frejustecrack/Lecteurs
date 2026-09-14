@@ -21,7 +21,7 @@ import {
 
 export default function Evenements() {
   const { profile } = useAuth();
-  const isCO = profile?.role === 'co';
+  const isCO = profile?.role === 'co' || profile?.role === 'co_paroissial';
   const isAdmin = profile?.role === 'admin';
   const canManage = isCO || isAdmin;
   const navigate = useNavigate();
@@ -190,11 +190,29 @@ export default function Evenements() {
                 <div>💰 Participation : {fmtMoney(e.montant_participation)}</div>
                 <div>👥 {nbParticipants[e.id] ?? 0} participant(s)</div>
               </div>
-              {e.statut === 'en_cours' && canManage && (
-                <div className="mt-3 text-xs font-semibold text-cdlj">
-                  Modifier →
-                </div>
-              )}
+              <div className="mt-3 flex items-center justify-between">
+                {e.statut === 'en_cours' && canManage ? (
+                  <span className="text-xs font-semibold text-cdlj">Modifier →</span>
+                ) : (
+                  <span />
+                )}
+                {canManage && (
+                  <button
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      if (!confirm(`Supprimer l'événement « ${e.nom} » ?`)) return;
+                      if (!confirm('Confirmation : supprimer définitivement ?')) return;
+                      supabase.from('evenements').delete().eq('id', e.id).then(({ error }) => {
+                        if (error) alert(error.message);
+                        else load();
+                      });
+                    }}
+                    className="text-xs font-semibold text-alerte hover:underline"
+                  >
+                    Supprimer
+                  </button>
+                )}
+              </div>
             </button>
           ))}
         </div>

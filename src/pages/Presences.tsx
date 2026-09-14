@@ -99,6 +99,27 @@ export default function Presences() {
     load().finally(() => setLoading(false));
   }, [load]);
 
+  // Synchronisation temps réel : toute modification de présence est reflétée immédiatement
+  useEffect(() => {
+    const channel = supabase
+      .channel('realtime-presences')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'presences' }, () => {
+        load();
+      })
+      .subscribe();
+    const onFocus = () => load();
+    const onVis = () => {
+      if (document.visibilityState === 'visible') load();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVis);
+      supabase.removeChannel(channel);
+    };
+  }, [load]);
+
   const map = useMemo(() => {
     const m = new Map<string, Presence>();
     presences.forEach((p) => m.set(`${p.lecteur_id}|${p.date_samedi}`, p));
@@ -311,13 +332,65 @@ export default function Presences() {
 
       {filtered.length === 0 ? (
         <EmptyState msg="Aucun lecteur actif. Créez des lecteurs pour enregistrer les présences." />
-      ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table
-            className={`w-full text-left text-sm ${
-              mode === 'semaine' ? 'min-w-[420px]' : 'min-w-[560px]'
-            }`}
-          >
+      ) : mode === 'semaine' ? (
+        <>
+          {/* Mobile : cartes empilées — pas de scroll horizontal, une seule case visible d'emblée */}
+          <ul className="space-y-2 sm:hidden">
+            {filtered.map((l) => {
+              const sam = samedis[0];
+              const p = sam ? map.get(`${l.id}|${sam}`) : undefined;
+              const arrive = sam ? samediEstArrive(sam) : false;
+              const gelee = sam ? estGelee(new Date(sam + 'T12:00:00')) : false;
+              const clickable = !gelee || isAdmin;
+              const vert = p?.statut === 'present';
+              const rouge = p?.statut === 'absent' || (!p && arrive);
+              const pres = samedis.filter((s) => map.get(`${l.id}|${s}`)?.statut === 'present').length;
+              const abs = samedisArrivesListe.filter((s) => map.get(`${l.id}|${s}`)?.statut !== 'present').length;
+              return (
+                <li
+                  key={l.id}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="font-mono text-xs font-semibold text-cdlj">{l.matricule}</div>
+                    <Link
+                      to={`/lecteurs/${l.id}`}
+                      className="block truncate text-sm font-medium text-slate-800 hover:text-cdlj"
+                    >
+                      {l.prenom} {l.nom.toUpperCase()}
+                    </Link>
+                    <div className="mt-0.5 text-xs font-semibold text-slate-500">{pres}P · {abs}A</div>
+                  </div>
+                  <button
+                    onClick={() => sam && clickable && toggle(l, sam)}
+                    disabled={!clickable || !sam}
+                    aria-busy={celluleActive === `${l.id}|${sam}` || undefined}
+                    title={
+                      !clickable
+                        ? 'Samedi gelé — correction Admin uniquement'
+                        : !arrive
+                          ? 'Samedi à venir — pas encore comptabilisé'
+                          : vert
+                            ? 'Présent — cliquez pour basculer en absent'
+                            : 'Absent — cliquez pour basculer en présent'
+                    }
+                    className={`h-12 w-20 shrink-0 rounded-xl text-base font-bold transition-all duration-150 active:scale-90 ${
+                      vert
+                        ? 'bg-emerald-500 text-white'
+                        : rouge
+                          ? 'bg-alerte text-white'
+                          : 'border border-dashed border-slate-300 text-slate-300'
+                    } ${clickable ? 'cursor-pointer hover:opacity-80' : 'cursor-not-allowed opacity-70'}`}
+                  >
+                    {vert ? '✓' : rouge ? '✗' : '—'}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {/* Desktop : tableau hebdomadaire sans scroll horizontal */}
+          <div className="hidden overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm sm:block">
+            <table className="w-full text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-3 py-3">Matricule</th>
@@ -412,6 +485,87 @@ export default function Presences() {
                     <td className="whitespace-nowrap px-2 py-2 text-center text-xs font-semibold text-slate-500">
                       {pres}P · {abs}A
                     </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        </>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full min-w-[560px] text-left text-sm">
+            <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-3 py-3">Matricule</th>
+                <th className="px-3 py-3">Lecteur</th>
+                {samedis.map((s) => (
+                  <th key={s} className="px-2 py-3 text-center">
+                    <span className="block whitespace-nowrap">{fmtDate(s).slice(0, 5)}</span>
+                    {s === dernierSam && (
+                      <span className="mt-1 inline-block rounded bg-blue-50 px-1 text-[10px] font-bold text-cdlj">
+                        DERNIER SAM.
+                      </span>
+                    )}
+                    {s === aujourdhui && (
+                      <span className="mt-1 inline-block rounded bg-amber-50 px-1 text-[10px] font-bold text-amber-700">
+                        AUJOURD'HUI
+                      </span>
+                    )}
+                    {!samediEstArrive(s) && (
+                      <span className="mt-1 inline-block rounded bg-slate-100 px-1 text-[10px] font-bold text-slate-400">
+                        À VENIR
+                      </span>
+                    )}
+                  </th>
+                ))}
+                <th className="px-2 py-3 text-center">Récap</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filtered.map((l) => {
+                const pres = samedis.filter((s) => map.get(`${l.id}|${s}`)?.statut === 'present').length;
+                const abs = samedisArrivesListe.filter((s) => map.get(`${l.id}|${s}`)?.statut !== 'present').length;
+                return (
+                  <tr key={l.id} className="hover:bg-slate-50/60">
+                    <td className="px-3 py-2 font-mono text-xs font-semibold text-cdlj">{l.matricule}</td>
+                    <td className="max-w-[220px] truncate px-3 py-2">
+                      <Link to={`/lecteurs/${l.id}`} className="font-medium text-slate-700 hover:text-cdlj">
+                        {l.prenom} {l.nom.toUpperCase()}
+                      </Link>
+                    </td>
+                    {samedis.map((s) => {
+                      const p = map.get(`${l.id}|${s}`);
+                      const arrive = samediEstArrive(s);
+                      const gelee = estGelee(new Date(s + 'T12:00:00'));
+                      const clickable = !gelee || isAdmin;
+                      const vert = p?.statut === 'present';
+                      const rouge = p?.statut === 'absent' || (!p && arrive);
+                      return (
+                        <td key={s} className="px-2 py-2 text-center">
+                          <button
+                            onClick={() => clickable && toggle(l, s)}
+                            disabled={!clickable}
+                            aria-busy={celluleActive === `${l.id}|${s}` || undefined}
+                            title={
+                              !clickable
+                                ? 'Samedi gelé — correction Admin uniquement'
+                                : !arrive
+                                  ? 'Samedi à venir — pas encore comptabilisé'
+                                  : vert
+                                    ? 'Présent — cliquez pour basculer en absent'
+                                    : 'Absent — cliquez pour basculer en présent'
+                            }
+                            className={`h-8 w-10 rounded-md text-sm font-bold transition-all duration-150 active:scale-90 ${
+                              vert ? 'bg-emerald-500 text-white' : rouge ? 'bg-alerte text-white' : 'border border-dashed border-slate-300 text-slate-300'
+                            } ${clickable ? 'cursor-pointer hover:opacity-80' : 'cursor-not-allowed opacity-70'}`}
+                          >
+                            {vert ? '✓' : rouge ? '✗' : '—'}
+                          </button>
+                        </td>
+                      );
+                    })}
+                    <td className="whitespace-nowrap px-2 py-2 text-center text-xs font-semibold text-slate-500">{pres}P · {abs}A</td>
                   </tr>
                 );
               })}

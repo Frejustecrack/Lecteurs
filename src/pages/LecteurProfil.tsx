@@ -187,6 +187,25 @@ export default function LecteurProfil() {
     load();
   }, [load]);
 
+  // Synchronisation temps réel : si la présence de ce lecteur est modifiée ailleurs, la fiche se met à jour
+  useEffect(() => {
+    if (!id) return;
+    const channel = supabase
+      .channel(`realtime-profil-${id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'presences', filter: `lecteur_id=eq.${id}` }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cotisations', filter: `lecteur_id=eq.${id}` }, () => load())
+      .subscribe();
+    const onFocus = () => load();
+    const onVis = () => { if (document.visibilityState === 'visible') load(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVis);
+      supabase.removeChannel(channel);
+    };
+  }, [id, load]);
+
   const gradeNom = (gid: number) => grades.find((g) => g.id === gid)?.nom ?? '—';
   const auteurName = (uid: string | null) =>
     profiles.find((p) => p.id === uid)?.full_name ?? '—';
