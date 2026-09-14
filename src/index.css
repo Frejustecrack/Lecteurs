@@ -18,4 +18,54 @@ body {
   background: var(--color-fond);
   color: #1f2937;
   font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Les tableaux ne doivent jamais élargir la page sur mobile : c'est la
+   cellule de défilement (overflow-x-auto) qui absorbe le dépassement. */
+table {
+  max-width: 100%;
+}
+
+/* Apparition des notifications (toast) */
+@keyframes cdlj-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.cdlj-toast {
+  animation: cdlj-toast-in 180ms ease-out both;
+}
+
+/* Apparition des fenêtres modales */
+@keyframes cdlj-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.cdlj-modal {
+  animation: cdlj-modal-in 180ms ease-out both;
+}
+
+/* Accessibilité : pas d'animation pour les utilisateurs qui la refusent. */
+@media (prefers-reduced-motion: reduce) {
+  .cdlj-toast,
+  .cdlj-modal {
+    animation: none;
+  }
+  button {
+    transition: none !important;
+  }
 }

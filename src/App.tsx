@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { supabaseConfiguré } from './lib/supabase';
 import { ToastProvider } from './components/ui';
 import Layout from './components/Layout';
 import Login from './pages/Login';
@@ -8,6 +9,7 @@ import Lecteurs from './pages/Lecteurs';
 import LecteurProfil from './pages/LecteurProfil';
 import Fraternites from './pages/Fraternites';
 import Presences from './pages/Presences';
+import Suivis from './pages/Suivis';
 import Cotisations from './pages/Cotisations';
 import Evenements from './pages/Evenements';
 import EvenementDetail from './pages/EvenementDetail';
@@ -51,7 +53,31 @@ function RequireAdmin() {
   return <Outlet />;
 }
 
+/** Écran affiché tant que les variables d'accès à la base ne sont pas renseignées. */
+function ConfigManquante() {
+  return (
+    <div className="flex min-h-full items-center justify-center p-4">
+      <div className="w-full max-w-md rounded-2xl border border-amber-200 bg-amber-50 p-6 text-center">
+        <div className="text-3xl">⚙️</div>
+        <h1 className="mt-2 text-lg font-bold text-slate-800">
+          Connexion à la base non configurée
+        </h1>
+        <p className="mt-2 text-sm text-slate-600">
+          Copiez <code className="rounded bg-white px-1">.env.example</code> en{' '}
+          <code className="rounded bg-white px-1">.env</code>, renseignez{' '}
+          <code className="rounded bg-white px-1">VITE_SUPABASE_URL</code> et{' '}
+          <code className="rounded bg-white px-1">
+            VITE_SUPABASE_PUBLISHABLE_KEY
+          </code>
+          , puis relancez l'application.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  if (!supabaseConfiguré) return <ConfigManquante />;
   return (
     <AuthProvider>
       <ToastProvider>
@@ -64,6 +90,7 @@ export default function App() {
               <Route path="/lecteurs/:id" element={<LecteurProfil />} />
               <Route path="/fraternites" element={<Fraternites />} />
               <Route path="/presences" element={<Presences />} />
+              <Route path="/suivis" element={<Suivis />} />
               <Route path="/cotisations" element={<Cotisations />} />
               <Route path="/evenements" element={<Evenements />} />
               <Route path="/evenements/:id" element={<EvenementDetail />} />

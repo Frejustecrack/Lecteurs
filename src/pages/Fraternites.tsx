@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import { traduireErreur } from '../lib/errors';
 import type { Fraternite, Lecteur } from '../lib/types';
 import {
   Badge,
@@ -12,6 +13,7 @@ import {
   inputCls,
   Modal,
   PageHeader,
+  pressCls,
   Spinner,
   useToast,
 } from '../components/ui';
@@ -29,6 +31,7 @@ export default function Fraternites() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState({ nom: '', responsables: '' });
   const [busy, setBusy] = useState(false);
+  const [busySuppr, setBusySuppr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [rF, rL] = await Promise.all([
@@ -85,7 +88,10 @@ export default function Fraternites() {
       setFormOpen(false);
       load();
     } catch (e) {
-      toast(e instanceof Error ? e.message : 'Erreur.', 'err');
+      toast(
+        traduireErreur(e, editId ? 'modifier cette fraternité' : 'créer cette fraternité'),
+        'err'
+      );
     } finally {
       setBusy(false);
     }
@@ -101,8 +107,10 @@ export default function Fraternites() {
       return;
     }
     if (!confirm(`Supprimer la fraternité « ${f.nom} » ? (elle est vide)`)) return;
+    setBusySuppr(f.id);
     const { error } = await supabase.from('fraternites').delete().eq('id', f.id);
-    if (error) toast(error.message, 'err');
+    setBusySuppr(null);
+    if (error) toast(traduireErreur(error, 'supprimer cette fraternité'), 'err');
     else {
       toast('Fraternité supprimée.');
       load();
@@ -141,15 +149,16 @@ export default function Fraternites() {
                     <div className="flex gap-2 text-xs font-semibold">
                       <button
                         onClick={() => openEdit(f)}
-                        className="text-cdlj hover:underline"
+                        className={`text-cdlj hover:underline ${pressCls}`}
                       >
                         Modifier
                       </button>
                       <button
                         onClick={() => supprimer(f)}
-                        className="text-alerte hover:underline"
+                        disabled={busySuppr === f.id}
+                        className={`text-alerte hover:underline ${pressCls}`}
                       >
-                        Supprimer
+                        {busySuppr === f.id ? 'Suppression…' : 'Supprimer'}
                       </button>
                     </div>
                   )}
@@ -221,8 +230,8 @@ export default function Fraternites() {
           </Field>
           <div className="flex justify-end gap-2 pt-2">
             <BtnGhost onClick={() => setFormOpen(false)}>Annuler</BtnGhost>
-            <BtnPrimary onClick={save} disabled={busy}>
-              {busy ? 'Enregistrement…' : 'Enregistrer'}
+            <BtnPrimary onClick={save} busy={busy} busyLabel="Enregistrement…">
+              Enregistrer
             </BtnPrimary>
           </div>
         </div>

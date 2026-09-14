@@ -18,6 +18,7 @@ import {
   fmtMoney,
   moisLabel,
   pct,
+  samedisArrives,
   samedisDuMois,
 } from '../lib/dates';
 import { useAuth } from '../context/AuthContext';
@@ -92,7 +93,9 @@ export default function Dashboard() {
     const paiements = (rPaiements.data ?? []) as { event_id: string; montant: number }[];
 
     // ---- KPIs mois courant
-    const samedis = samedisDuMois(am, m).map(dateISO);
+    // Seuls les samedis déjà arrivés sont comptabilisés : un samedi à venir
+    // ne peut ni gonfler le taux d'absence ni le nombre de cotisations dues.
+    const samedis = samedisArrives(samedisDuMois(am, m).map(dateISO));
     const presMois = pres.filter(
       (p) => activesIds.has(p.lecteur_id) && samedis.includes(p.date_samedi)
     );
@@ -144,7 +147,7 @@ export default function Dashboard() {
       const d = new Date(am, m - i, 1);
       const ya = d.getFullYear();
       const mo = d.getMonth();
-      const sam = samedisDuMois(ya, mo).map(dateISO);
+      const sam = samedisArrives(samedisDuMois(ya, mo).map(dateISO));
       const finMois = dateISO(new Date(ya, mo + 1, 0, 23, 59));
       const presM = pres.filter(
         (p) => activesIds.has(p.lecteur_id) && sam.includes(p.date_samedi)

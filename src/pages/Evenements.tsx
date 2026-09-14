@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { fmtDate, fmtMoney } from '../lib/dates';
+import { traduireErreur } from '../lib/errors';
 import type { Evenement } from '../lib/types';
 import {
   Badge,
@@ -13,6 +14,7 @@ import {
   inputCls,
   Modal,
   PageHeader,
+  pressCls,
   Spinner,
   useToast,
 } from '../components/ui';
@@ -96,6 +98,9 @@ export default function Evenements() {
       date_evenement: form.date_evenement,
       lieu: form.lieu.trim() || null,
       montant_participation: Number(form.montant_participation) || 0,
+      // Créateur de l'événement (cahier des charges §18 : actions tracées
+      // avec leur auteur).
+      ...(editId ? {} : { created_by: profile?.id ?? null }),
     };
     try {
       if (editId) {
@@ -113,7 +118,10 @@ export default function Evenements() {
       setFormOpen(false);
       load();
     } catch (e) {
-      toast(e instanceof Error ? e.message : 'Erreur.', 'err');
+      toast(
+        traduireErreur(e, editId ? 'modifier cet événement' : 'créer cet événement'),
+        'err'
+      );
     } finally {
       setBusy(false);
     }
@@ -136,7 +144,8 @@ export default function Evenements() {
       <div className="mb-4 flex rounded-lg border border-slate-200 bg-white p-0.5 w-fit">
         <button
           onClick={() => setTab('en_cours')}
-          className={`rounded-md px-4 py-1.5 text-sm font-semibold ${
+          aria-pressed={tab === 'en_cours'}
+          className={`rounded-md px-4 py-1.5 text-sm font-semibold ${pressCls} ${
             tab === 'en_cours' ? 'bg-cdlj text-white' : 'text-slate-600'
           }`}
         >
@@ -144,7 +153,8 @@ export default function Evenements() {
         </button>
         <button
           onClick={() => setTab('termine')}
-          className={`rounded-md px-4 py-1.5 text-sm font-semibold ${
+          aria-pressed={tab === 'termine'}
+          className={`rounded-md px-4 py-1.5 text-sm font-semibold ${pressCls} ${
             tab === 'termine' ? 'bg-cdlj text-white' : 'text-slate-600'
           }`}
         >
@@ -236,8 +246,8 @@ export default function Evenements() {
           </Field>
           <div className="flex justify-end gap-2 pt-2">
             <BtnGhost onClick={() => setFormOpen(false)}>Annuler</BtnGhost>
-            <BtnPrimary onClick={save} disabled={busy}>
-              {busy ? 'Enregistrement…' : 'Enregistrer'}
+            <BtnPrimary onClick={save} busy={busy} busyLabel="Enregistrement…">
+              Enregistrer
             </BtnPrimary>
           </div>
         </div>
