@@ -146,3 +146,27 @@ export function semaineLabel(d: Date): string {
 export function estSemaineCourante(d: Date): boolean {
   return dateISO(lundiDeSemaine(d)) === dateISO(lundiDeSemaine(new Date()));
 }
+
+// ---------------------------------------------------------------------------
+// Samedis « arrivés » — règle CDLJ :
+//   un samedi qui n'est pas encore arrivé n'est pas pris en compte.
+//   On ne raisonne que sur les samedis passés et le samedi du jour.
+// ---------------------------------------------------------------------------
+
+/** Vrai si le samedi est arrivé (aujourd'hui ou avant), faux s'il est à venir. */
+export function samediEstArrive(dateSamedi: string | Date): boolean {
+  const d =
+    typeof dateSamedi === 'string'
+      ? new Date(`${dateSamedi}T12:00:00`)
+      : new Date(dateSamedi);
+  if (isNaN(d.getTime())) return false;
+  d.setHours(0, 0, 0, 0);
+  const auj = new Date();
+  auj.setHours(0, 0, 0, 0);
+  return d.getTime() <= auj.getTime();
+}
+
+/** Ne conserve que les samedis déjà arrivés (passés ou en cours). */
+export function samedisArrives(samedis: string[]): string[] {
+  return samedis.filter(samediEstArrive);
+}

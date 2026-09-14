@@ -10,7 +10,7 @@ export interface Recap {
   present: number;
   /** Séances pointées « absent » sur la période. */
   absent: number;
-  /** Séances de la période qui n'ont pas encore été pointées. */
+  /** Séances arrivées mais non pointées — comptent comme des absences. */
   nonSaisi: number;
   /** Nombre de séances prises en compte sur la période. */
   total: number;
@@ -35,7 +35,9 @@ export function indexPresences(
  * @param lecteurs  lecteurs à récapituler (déjà filtrés sur les actifs)
  * @param presences présences chargées pour la période
  * @param samedis   samedis pris en compte (1 en vue hebdomadaire,
- *                  3 à 5 en vue mensuelle, ou un samedi précis)
+ *                  3 à 5 en vue mensuelle, ou un samedi précis).
+ *                  Ne passer que des samedis déjà arrivés : un samedi à venir
+ *                  n'est pas une absence (voir `samedisArrives`).
  */
 export function calculerRecaps(
   lecteurs: Lecteur[],
@@ -63,11 +65,20 @@ export function calculerRecaps(
   });
 }
 
+/**
+ * Absences effectives : séances pointées « absent » + séances arrivées non
+ * pointées. Règle CDLJ — à preuve du contraire, un lecteur qui n'a pas été
+ * déclaré présent est considéré comme absent.
+ */
+export function absencesEffectives(r: Recap): number {
+  return r.absent + r.nonSaisi;
+}
+
 /** Applique le filtre de récapitulatif (« absents », « assidus »…). */
 export function filtreRecap(r: Recap, filtre: FiltreRecap): boolean {
   switch (filtre) {
     case 'absents':
-      return r.absent > 0;
+      return absencesEffectives(r) > 0;
     case 'parfaits':
       return r.total > 0 && r.present === r.total;
     case 'incomplets':
@@ -117,7 +128,8 @@ export function trierRecaps(recaps: Recap[], tri: TriRecap, asc: boolean): Recap
         );
       case 'absences':
         return (
-          (a.absent - b.absent) * sens || a.lecteur.nom.localeCompare(b.lecteur.nom)
+          (absencesEffectives(a) - absencesEffectives(b)) * sens ||
+          a.lecteur.nom.localeCompare(b.lecteur.nom)
         );
       default:
         return (

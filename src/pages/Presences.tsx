@@ -5,25 +5,35 @@ import { useAuth } from '../context/AuthContext';
 import {
   dateISO,
   deplaceMois,
+  deplaceSemaine,
   dernierSamedi,
+  dimancheDeSemaine,
   estGelee,
   fmtDate,
+  lundiDeSemaine,
   moisLabel,
+  samediEstArrive,
   samedisDuMois,
+  samedisSemaine,
+  semaineLabel,
 } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
 import type { Fraternite, Lecteur, Presence } from '../lib/types';
 import {
   BtnGhost,
   EmptyState,
+  iconPressCls,
   inputCls,
   PageHeader,
-  pressCls,
+  Segmented,
   Spinner,
   StepNav,
   useToast,
 } from '../components/ui';
 import { exportPresences } from '../pdf/export';
+
+/** Vue mensuelle (tous les samedis du mois) ou hebdomadaire (un seul samedi). */
+type ModeVue = 'mois' | 'semaine';
 
 export default function Presences() {
   const { profile } = useAuth();
@@ -31,8 +41,10 @@ export default function Presences() {
   const { toast } = useToast();
 
   const now = new Date();
+  const [mode, setMode] = useState<ModeVue>('mois');
   const [annee, setAnnee] = useState(now.getFullYear());
   const [mois, setMois] = useState(now.getMonth());
+  const [semaine, setSemaine] = useState<Date>(lundiDeSemaine(now));
   const [fId, setFId] = useState('');
   const [search, setSearch] = useState('');
 
@@ -43,11 +55,24 @@ export default function Presences() {
   const [busyPdf, setBusyPdf] = useState(false);
   const [celluleActive, setCelluleActive] = useState<string | null>(null);
 
-  const samedis = useMemo(
-    () => samedisDuMois(annee, mois).map(dateISO),
-    [annee, mois]
+  /**
+   * Les samedis affichés : 3 à 5 colonnes en vue mensuelle,
+   * UNE SEULE colonne en vue hebdomadaire — plus besoin de faire défiler
+   * le tableau pour pointer le samedi en cours.
+   */
+  const samedis = useMemo<string[]>(
+    () =>
+      mode === 'semaine'
+        ? samedisSemaine(semaine).map(dateISO)
+        : samedisDuMois(annee, mois).map(dateISO),
+    [mode, semaine, annee, mois]
   );
+
   const dernierSam = useMemo(() => dateISO(dernierSamedi()), []);
+  const aujourdhui = useMemo(() => dateISO(new Date()), []);
+
+  const periodeLabel =
+    mode === 'semaine' ? semaineLabel(semaine) : moisLabel(annee, mois);
 
   const load = useCallback(async () => {
     if (samedis.length === 0) {
@@ -93,12 +118,18 @@ export default function Presences() {
     });
   }, [lecteurs, fId, search]);
 
+  /** Samedis déjà arrivés : seuls ceux-là sont comptabilisés. */
+  const samedisArrivesListe = useMemo(
+    () => samedis.filter(samediEstArrive),
+    [samedis]
+  );
+
   async function toggle(l: Lecteur, sam: string) {
     const current = map.get(`${l.id}|${sam}`);
     const gelee = sam < dernierSam;
     if (gelee && !isAdmin) {
       toast(
-        'Ce samedi est gelé (passé). Seule l’Administrateur peut effectuer une correction exceptionnelle, tracée dans les logs.',
+        "Ce samedi est gelé (passé). Seule l'Administrateur peut effectuer une correction exceptionnelle, tracée dans les logs.",
         'err'
       );
       return;
@@ -138,86 +169,129 @@ export default function Presences() {
     load();
   }
 
-  // ---- recherche par samedi
-  const [rechercheSam, setRechercheSam] = useState('');
-  const [rechercheStatut, setRechercheStatut] = useState<'present' | 'absent'>('absent');
-  const resultats = useMemo(() => {
-    if (!rechercheSam) return null;
-    return lecteurs.filter((l) => {
-      const p = map.get(`${l.id}|${rechercheSam}`);
-      if (rechercheStatut === 'present') return p?.statut === 'present';
-      return p?.statut === 'absent' || !p; // absents = marqués absents ou non saisis
-    });
-  }, [rechercheSam, rechercheStatut, lecteurs, map]);
+  function allerPrecedent() {
+    if (mode === 'semaine') setSemaine(deplaceSemaine(semaine, -1));
+    else {
+      const d = deplaceMois(annee, mois, -1);
+      setAnnee(d.annee);
+      setMois(d.mois);
+    }
+  }
+
+  function allerSuivant() {
+    if (mode === 'semaine') setSemaine(deplaceSemaine(semaine, 1));
+    else {
+      const d = deplaceMois(annee, mois, 1);
+      setAnnee(d.annee);
+      setMois(d.mois);
+    }
+  }
+
+  function revenirAujourdhui() {
+    const t = new Date();
+    setAnnee(t.getFullYear());
+    setMois(t.getMonth());
+    setSemaine(lundiDeSemaine(t));
+  }
 
   if (loading) return <Spinner label="Chargement des présences…" />;
+
+  const peutExporter =
+    profile?.role === 'admin' ||
+    profile?.role === 'co' ||
+    profile?.role === 'caissier';
 
   return (
     <div>
       <PageHeader
         title="Présences"
-        sub="Enregistrement des samedis — un samedi passé est gelé automatiquement"
+        sub="Pointage des samedis — un samedi non pointé est considéré comme absent"
         actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <StepNav
-              label={moisLabel(annee, mois)}
-              onPrev={() => {
-                const d = deplaceMois(annee, mois, -1);
-                setAnnee(d.annee);
-                setMois(d.mois);
+          peutExporter ? (
+            <BtnGhost
+              busy={busyPdf}
+              busyLabel="PDF…"
+              onClick={async () => {
+                setBusyPdf(true);
+                try {
+                  exportPresences({
+                    annee,
+                    mois,
+                    fraternite: fraternites.find((f) => f.id === fId)?.nom ?? null,
+                    lecteurs: filtered,
+                    presences,
+                    auteur: profile?.full_name ?? '—',
+                    samedis,
+                    periode: periodeLabel,
+                  });
+                  await supabase.rpc('log_action', {
+                    p_action: 'export.pdf',
+                    p_objet_type: 'presences',
+                    p_objet_ref: `${annee}-${String(mois + 1).padStart(2, '0')}`,
+                    p_detail: JSON.stringify({
+                      document: 'fiche_presences',
+                      vue: mode,
+                      fraternite: fId || 'globale',
+                    }),
+                  });
+                  toast('PDF généré.');
+                } catch (err) {
+                  toast(traduireErreur(err, 'générer le PDF des présences'), 'err');
+                } finally {
+                  setBusyPdf(false);
+                }
               }}
-              onNext={() => {
-                const d = deplaceMois(annee, mois, 1);
-                setAnnee(d.annee);
-                setMois(d.mois);
-              }}
-            />
-            {(profile?.role === 'admin' ||
-              profile?.role === 'co' ||
-              profile?.role === 'caissier') && (
-              <BtnGhost
-                busy={busyPdf}
-                busyLabel="PDF…"
-                onClick={async () => {
-                  setBusyPdf(true);
-                  try {
-                    exportPresences({
-                      annee,
-                      mois,
-                      fraternite: fraternites.find((f) => f.id === fId)?.nom ?? null,
-                      lecteurs: filtered,
-                      presences,
-                      auteur: profile?.full_name ?? '—',
-                    });
-                    await supabase.rpc('log_action', {
-                      p_action: 'export.pdf',
-                      p_objet_type: 'presences',
-                      p_objet_ref: `${annee}-${String(mois + 1).padStart(2, '0')}`,
-                      p_detail: JSON.stringify({
-                        document: 'fiche_presences',
-                        fraternite: fId || 'globale',
-                      }),
-                    });
-                    toast('PDF généré.');
-                  } catch (err) {
-                    toast(traduireErreur(err, 'générer le PDF des présences'), 'err');
-                  } finally {
-                    setBusyPdf(false);
-                  }
-                }}
-              >
-                ⬇ PDF
-              </BtnGhost>
-            )}
-          </div>
+            >
+              ⬇ PDF
+            </BtnGhost>
+          ) : undefined
         }
       />
 
+      {/* ------------------------------------------------- vue + navigation */}
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <Segmented
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: 'mois', label: 'Vue mensuelle', icon: '🗓️' },
+            { value: 'semaine', label: 'Vue hebdomadaire', icon: '📆' },
+          ]}
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <StepNav
+            label={periodeLabel}
+            width="min-w-[190px]"
+            onPrev={allerPrecedent}
+            onNext={allerSuivant}
+          />
+          <button
+            onClick={revenirAujourdhui}
+            className={`${iconPressCls} px-3 py-2 text-xs font-semibold text-cdlj`}
+          >
+            Aujourd'hui
+          </button>
+        </div>
+      </div>
+
+      {mode === 'semaine' && (
+        <p className="mb-4 text-xs text-slate-400">
+          Vue hebdomadaire : une seule case devant chaque lecteur — le samedi{' '}
+          <strong className="text-slate-500">
+            {samedis[0] ? fmtDate(samedis[0]) : '—'}
+          </strong>{' '}
+          (semaine du {fmtDate(lundiDeSemaine(semaine))} au{' '}
+          {fmtDate(dimancheDeSemaine(semaine))}).
+        </p>
+      )}
+
+      {/* ---------------------------------------------------------- filtres */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <select
           value={fId}
           onChange={(e) => setFId(e.target.value)}
-          className={`${inputCls} w-auto`}
+          aria-label="Filtrer par fraternité"
+          className={`${inputCls} w-full sm:w-auto`}
         >
           <option value="">Vue globale — toutes les fraternités</option>
           {fraternites.map((f) => (
@@ -230,70 +304,42 @@ export default function Presences() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Rechercher un lecteur (matricule…)"
-          className={`${inputCls} max-w-xs flex-1`}
+          aria-label="Rechercher un lecteur"
+          className={`${inputCls} min-w-0 flex-1 sm:max-w-xs`}
         />
-        <select
-          value={rechercheSam}
-          onChange={(e) => setRechercheSam(e.target.value)}
-          className={`${inputCls} w-auto`}
-        >
-          <option value="">— Recherche d'un samedi —</option>
-          {samedis.map((s) => (
-            <option key={s} value={s}>
-              Samedi {fmtDate(s)}
-            </option>
-          ))}
-        </select>
-        {rechercheSam && (
-          <select
-            value={rechercheStatut}
-            onChange={(e) => setRechercheStatut(e.target.value as 'present' | 'absent')}
-            className={`${inputCls} w-auto`}
-          >
-            <option value="absent">Absents</option>
-            <option value="present">Présents</option>
-          </select>
-        )}
       </div>
 
-      {rechercheSam ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h3 className="mb-2 text-sm font-bold text-slate-700">
-            {rechercheStatut === 'absent' ? 'Absents' : 'Présents'} du samedi{' '}
-            {fmtDate(rechercheSam)}
-          </h3>
-          {resultats && resultats.length === 0 ? (
-            <p className="text-sm text-slate-400">Personne.</p>
-          ) : (
-            resultats && (
-              <ul className="grid grid-cols-1 gap-1 text-sm sm:grid-cols-2 lg:grid-cols-3">
-                {resultats.map((l) => (
-                  <li key={l.id} className="flex justify-between rounded px-2 py-1 hover:bg-slate-50">
-                    <span>
-                      <span className="font-mono text-xs text-cdlj">{l.matricule}</span>{' '}
-                      {l.prenom} {l.nom.toUpperCase()}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )
-          )}
-        </div>
-      ) : filtered.length === 0 ? (
+      {filtered.length === 0 ? (
         <EmptyState msg="Aucun lecteur actif. Créez des lecteurs pour enregistrer les présences." />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full min-w-[560px] text-left text-sm">
+          <table
+            className={`w-full text-left text-sm ${
+              mode === 'semaine' ? 'min-w-[420px]' : 'min-w-[560px]'
+            }`}
+          >
             <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-3 py-3">Matricule</th>
                 <th className="px-3 py-3">Lecteur</th>
                 {samedis.map((s) => (
                   <th key={s} className="px-2 py-3 text-center">
-                    {fmtDate(s).slice(0, 5)}
-                    {s >= dernierSam && (
-                      <span className="ml-1 rounded bg-blue-50 px-1 text-[10px] font-bold text-cdlj">
-                        {s === dernierSam ? 'CE SAM' : ''}
+                    <span className="block whitespace-nowrap">
+                      {fmtDate(s).slice(0, 5)}
+                    </span>
+                    {s === dernierSam && (
+                      <span className="mt-1 inline-block rounded bg-blue-50 px-1 text-[10px] font-bold text-cdlj">
+                        DERNIER SAM.
+                      </span>
+                    )}
+                    {s === aujourdhui && (
+                      <span className="mt-1 inline-block rounded bg-amber-50 px-1 text-[10px] font-bold text-amber-700">
+                        AUJOURD'HUI
+                      </span>
+                    )}
+                    {!samediEstArrive(s) && (
+                      <span className="mt-1 inline-block rounded bg-slate-100 px-1 text-[10px] font-bold text-slate-400">
+                        À VENIR
                       </span>
                     )}
                   </th>
@@ -303,14 +349,19 @@ export default function Presences() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.map((l) => {
-                const pres = samedis.filter((s) => map.get(`${l.id}|${s}`)?.statut === 'present').length;
-                const abs = samedis.filter((s) => map.get(`${l.id}|${s}`)?.statut === 'absent').length;
+                // À preuve du contraire : un samedi arrivé non pointé = absent.
+                const pres = samedis.filter(
+                  (s) => map.get(`${l.id}|${s}`)?.statut === 'present'
+                ).length;
+                const abs = samedisArrivesListe.filter(
+                  (s) => map.get(`${l.id}|${s}`)?.statut !== 'present'
+                ).length;
                 return (
                   <tr key={l.id} className="hover:bg-slate-50/60">
                     <td className="px-3 py-2 font-mono text-xs font-semibold text-cdlj">
                       {l.matricule}
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="max-w-[220px] truncate px-3 py-2">
                       <Link
                         to={`/lecteurs/${l.id}`}
                         className="font-medium text-slate-700 hover:text-cdlj"
@@ -320,33 +371,45 @@ export default function Presences() {
                     </td>
                     {samedis.map((s) => {
                       const p = map.get(`${l.id}|${s}`);
+                      const arrive = samediEstArrive(s);
                       const gelee = estGelee(new Date(s + 'T12:00:00'));
                       const clickable = !gelee || isAdmin;
+                      // Rouge par défaut dès que le samedi est arrivé.
+                      const vert = p?.statut === 'present';
+                      const rouge = p?.statut === 'absent' || (!p && arrive);
                       return (
                         <td key={s} className="px-2 py-2 text-center">
                           <button
                             onClick={() => clickable && toggle(l, s)}
                             disabled={!clickable}
-                            title={
-                              clickable
-                                ? 'Cliquez pour basculer présent/absent'
-                                : 'Samedi gelé — correction Admin uniquement'
-                            }
                             aria-busy={celluleActive === `${l.id}|${s}` || undefined}
+                            title={
+                              !clickable
+                                ? 'Samedi gelé — correction Admin uniquement'
+                                : !arrive
+                                  ? 'Samedi à venir — pas encore comptabilisé'
+                                  : vert
+                                    ? 'Présent — cliquez pour basculer en absent'
+                                    : 'Absent — cliquez pour basculer en présent'
+                            }
                             className={`h-8 w-10 rounded-md text-sm font-bold transition-all duration-150 active:scale-90 ${
-                              p?.statut === 'present'
+                              vert
                                 ? 'bg-emerald-500 text-white'
-                                : p?.statut === 'absent'
+                                : rouge
                                   ? 'bg-alerte text-white'
                                   : 'border border-dashed border-slate-300 text-slate-300'
-                            } ${clickable ? 'cursor-pointer hover:opacity-80' : 'cursor-not-allowed opacity-70'}`}
+                            } ${
+                              clickable
+                                ? 'cursor-pointer hover:opacity-80'
+                                : 'cursor-not-allowed opacity-70'
+                            }`}
                           >
-                            {p?.statut === 'present' ? '✓' : p?.statut === 'absent' ? '✗' : '—'}
+                            {vert ? '✓' : rouge ? '✗' : '—'}
                           </button>
                         </td>
                       );
                     })}
-                    <td className="px-2 py-2 text-center text-xs font-semibold text-slate-500">
+                    <td className="whitespace-nowrap px-2 py-2 text-center text-xs font-semibold text-slate-500">
                       {pres}P · {abs}A
                     </td>
                   </tr>
@@ -358,9 +421,16 @@ export default function Presences() {
       )}
 
       <p className="mt-3 text-xs text-slate-400">
-        ✓ Présent · ✗ Absent · — Non saisi. Un samedi est gelé à partir de dimanche
-        00:00 — correction exceptionnelle possible par l'Administrateur (tracée dans
-        les logs).
+        ✓ Présent · ✗ Absent · — Samedi à venir (non comptabilisé). Par défaut un
+        samedi arrivé est <strong className="text-alerte">rouge</strong> : tant que
+        la présence n'a pas été basculée au vert, le lecteur est considéré comme
+        absent. Un samedi passé est gelé — correction exceptionnelle de
+        l'Administrateur uniquement, tracée dans les logs. Le récapitulatif par
+        lecteur et les listes de présents/absents se consultent dans l'onglet{' '}
+        <Link to="/suivis" className="font-semibold text-cdlj hover:underline">
+          Suivis
+        </Link>
+        .
       </p>
     </div>
   );

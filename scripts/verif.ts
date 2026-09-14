@@ -13,6 +13,8 @@ import {
   estGelee,
   lundiDeSemaine,
   numeroSemaine,
+  samediEstArrive,
+  samedisArrives,
   samedisDuMois,
   samedisSemaine,
   semaineLabel,
@@ -25,6 +27,7 @@ import {
 } from '../src/lib/validation.ts';
 import { estErreurDroits, traduireErreur } from '../src/lib/errors.ts';
 import {
+  absencesEffectives,
   appliquerFiltreRecap,
   calculerRecaps,
   filtrerRecaps,
@@ -97,6 +100,34 @@ verif(
   'le samedi suivant n’est pas gelé',
   !estGelee(new Date(dernier.getTime() + 7 * 86400000))
 );
+
+verif('le dernier samedi est arrivé', samediEstArrive(dernierSamedi()));
+verif(
+  'le samedi précédent est arrivé',
+  samediEstArrive(new Date(dernier.getTime() - 7 * 86400000))
+);
+verif(
+  'le samedi suivant n’est pas arrivé',
+  !samediEstArrive(new Date(dernier.getTime() + 7 * 86400000))
+);
+verif(
+  'une date ISO passée est arrivée',
+  samediEstArrive('2020-01-04')
+);
+verif(
+  'une date ISO future n’est pas arrivée',
+  !samediEstArrive('2099-01-03')
+);
+eq(
+  'samedisArrives() ne garde que les samedis passés ou du jour',
+  samedisArrives([
+    dateISO(new Date(dernier.getTime() - 7 * 86400000)),
+    dateISO(dernier),
+    dateISO(new Date(dernier.getTime() + 7 * 86400000)),
+  ]).length,
+  2
+);
+eq('samedisArrives() sur une liste vide', samedisArrives([]).length, 0);
 
 // ============================================================================
 console.log('\n── Validation : années de naissance et d’adhésion ───────────────────');
@@ -275,7 +306,12 @@ eq('Paul : taux 75 %', recaps[1].taux, 75);
 eq('Jean : 3 séances non pointées', recaps[2].nonSaisi, 3);
 eq('Jean : taux 25 %', recaps[2].taux, 25);
 
-eq('filtre « absents » → 1 lecteur (Paul)', appliquerFiltreRecap(recaps, 'absents').length, 1);
+// Règle « à preuve du contraire » : un samedi arrivé non pointé compte comme
+// une absence. Jean (1 séance pointée sur 4) a donc 3 absences effectives.
+eq('absences effectives de Marie', absencesEffectives(recaps[0]), 0);
+eq('absences effectives de Paul', absencesEffectives(recaps[1]), 1);
+eq('absences effectives de Jean (1 absent pointé + 3 non pointés = 0 + 3)', absencesEffectives(recaps[2]), 3);
+eq('filtre « absents » → 2 lecteurs (Paul + Jean)', appliquerFiltreRecap(recaps, 'absents').length, 2);
 eq('filtre « présents tout le long » → 1 lecteur (Marie)', appliquerFiltreRecap(recaps, 'parfaits').length, 1);
 eq('filtre « saisie incomplète » → 1 lecteur (Jean)', appliquerFiltreRecap(recaps, 'incomplets').length, 1);
 eq('filtre « tous » → 3 lecteurs', appliquerFiltreRecap(recaps, 'tous').length, 3);
@@ -301,20 +337,25 @@ eq(
   1
 );
 eq(
-  'cumul fraternité + filtre « absents » sur fr2 → 0',
+  'filtre « absents » sur fr2 → Jean (non pointé)',
   filtrerRecaps(recaps, { fraterniteId: 'fr2', filtre: 'absents' }).length,
-  0
+  1
+);
+eq(
+  'aucun lecteur sans absence effective n’apparaît dans « absents »',
+  appliquerFiltreRecap(recaps, 'absents').some((r) => absencesEffectives(r) === 0),
+  false
 );
 
 eq(
-  'tri par absences croissantes',
+  'tri par absences effectives croissantes',
   trierRecaps(recaps, 'absences', true).map((r) => r.lecteur.matricule).join(','),
-  'LEC100,LEC102,LEC101'
+  'LEC100,LEC101,LEC102'
 );
 eq(
-  'tri par absences décroissantes',
+  'tri par absences effectives décroissantes',
   trierRecaps(recaps, 'absences', false).map((r) => r.lecteur.matricule)[0],
-  'LEC101'
+  'LEC102'
 );
 eq(
   'tri par matricule',
@@ -329,7 +370,7 @@ eq('samedi unique : Marie présente', recapUn[0].present, 1);
 eq('samedi unique : Paul absent', recapUn[1].absent, 1);
 eq('samedi unique : Jean non pointé', recapUn[2].nonSaisi, 1);
 eq('samedi unique : aucun assidu sauf Marie', appliquerFiltreRecap(recapUn, 'parfaits').length, 1);
-eq('samedi unique : 1 seul absent', appliquerFiltreRecap(recapUn, 'absents').length, 1);
+eq('samedi unique : 2 absences effectives (Paul absent + Jean non pointé)', appliquerFiltreRecap(recapUn, 'absents').length, 2);
 
 // Période vide (aucun samedi) : aucun plantage, taux à 0
 const recapVide = calculerRecaps(lect, pres, []);

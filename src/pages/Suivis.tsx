@@ -11,12 +11,14 @@ import {
   fmtDate,
   lundiDeSemaine,
   moisLabel,
+  samediEstArrive,
   samedisDuMois,
   samedisSemaine,
   semaineLabel,
 } from '../lib/dates';
 import type { Fraternite, Lecteur, Presence } from '../lib/types';
 import {
+  absencesEffectives,
   appliquerFiltreRecap,
   calculerRecaps,
   filtrerRecaps,
@@ -90,14 +92,19 @@ export default function Suivis() {
     return samedisDuMois(annee, mois).map(dateISO);
   }, [mode, semaine, annee, mois]);
 
-  /** Les samedis réellement pris en compte dans le récapitulatif. */
-  const samedisComptes = useMemo(
-    () =>
+  /**
+   * Les samedis réellement pris en compte dans le récapitulatif.
+   * Un samedi qui n'est pas encore arrivé n'est jamais compté : ni présence,
+   * ni absence (règle CDLJ — on ne raisonne que sur les samedis passés et
+   * le samedi du jour).
+   */
+  const samedisComptes = useMemo(() => {
+    const base =
       samediChoisi && samedisPeriode.includes(samediChoisi)
         ? [samediChoisi]
-        : samedisPeriode,
-    [samediChoisi, samedisPeriode]
-  );
+        : samedisPeriode;
+    return base.filter(samediEstArrive);
+  }, [samediChoisi, samedisPeriode]);
 
   const periodeLabel =
     mode === 'semaine' ? semaineLabel(semaine) : moisLabel(annee, mois);
@@ -152,7 +159,7 @@ export default function Suivis() {
   // ---------------------------------------------------------------- indicateurs
   const nbSeances = samedisComptes.length;
   const nbAssidus = filtres.filter((r) => r.total > 0 && r.present === r.total).length;
-  const nbAbsents = filtres.filter((r) => r.absent > 0).length;
+  const nbAbsents = filtres.filter((r) => absencesEffectives(r) > 0).length;
   const moyennePresents =
     nbSeances > 0
       ? Math.round(
@@ -205,6 +212,11 @@ export default function Suivis() {
   const fraterniteNom = (id: string | null) =>
     fraternites.find((f) => f.id === id)?.nom ?? null;
 
+  const samedisArrivesMois = useMemo(
+    () => samedisPeriode.filter(samediEstArrive),
+    [samedisPeriode]
+  );
+
   const aideFiltre = FILTRES.find((f) => f.value === filtre)?.aide;
   const dernierSam = dateISO(dernierSamedi());
 
@@ -251,11 +263,14 @@ export default function Suivis() {
             onChange={(e) => setSamediChoisi(e.target.value)}
             className={`${inputCls} w-full sm:w-auto`}
           >
-            <option value="">Tous les samedis du mois ({samedisPeriode.length})</option>
-            {samedisPeriode.map((s) => (
+            <option value="">
+              Tous les samedis arrivés du mois ({samedisArrivesMois.length} sur{' '}
+              {samedisPeriode.length})
+            </option>
+            {samedisArrivesMois.map((s) => (
               <option key={s} value={s}>
                 Samedi {fmtDate(s)}
-                {s >= dernierSam ? ' (à venir ou en cours)' : ''}
+                {s === dernierSam ? ' (dernier samedi)' : ''}
               </option>
             ))}
           </select>
@@ -378,18 +393,16 @@ export default function Suivis() {
                     tone={
                       r.total > 0 && r.present === r.total
                         ? 'green'
-                        : r.absent > 0
+                        : absencesEffectives(r) > 0
                           ? 'red'
                           : 'amber'
                     }
                   >
                     {r.total > 0 && r.present === r.total
                       ? 'Assidu'
-                      : r.absent > 0
-                        ? `${r.absent} absence(s)`
-                        : r.nonSaisi > 0
-                          ? 'Non pointé'
-                          : '—'}
+                      : absencesEffectives(r) > 0
+                        ? `${absencesEffectives(r)} absence(s)`
+                        : '—'}
                   </Badge>
                 </div>
                 <div className="mt-2 grid grid-cols-3 gap-2 text-center text-xs">
@@ -397,7 +410,7 @@ export default function Suivis() {
                     {r.present} <span className="font-medium">présent(s)</span>
                   </div>
                   <div className="rounded-lg bg-red-50 py-1.5 font-bold text-alerte">
-                    {r.absent} <span className="font-medium">absence(s)</span>
+                    {absencesEffectives(r)} <span className="font-medium">absence(s)</span>
                   </div>
                   <div className="rounded-lg bg-slate-50 py-1.5 font-bold text-slate-500">
                     {r.taux} <span className="font-medium">%</span>
@@ -457,7 +470,7 @@ export default function Suivis() {
                       {r.present}
                     </td>
                     <td className="px-3 py-2 text-center font-semibold text-alerte">
-                      {r.absent}
+                      {absencesEffectives(r)}
                     </td>
                     <td className="px-3 py-2 text-center text-slate-400">
                       {r.nonSaisi > 0 ? r.nonSaisi : '—'}
@@ -491,8 +504,8 @@ export default function Suivis() {
               estSemaineCourante(semaine) ? ' (semaine en cours)' : ''
             }.`
           : ''}{' '}
-        Les samedis non pointés apparaissent dans la colonne « Non pointé » et dans
-        le filtre « Saisie incomplète ».
+        Un samedi arrivé mais non pointé compte comme une absence (« à preuve du
+        contraire ») ; les samedis à venir ne sont jamais comptabilisés.
       </p>
     </div>
   );

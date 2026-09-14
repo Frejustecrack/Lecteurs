@@ -10,6 +10,7 @@ import {
   fmtDateHeure,
   fmtMoney,
   moisLabel,
+  samediEstArrive,
   samedisDuMois,
 } from '../lib/dates';
 import type {
@@ -546,21 +547,26 @@ export default function LecteurProfil() {
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {samedisP.map((d) => {
                 const st = presMoisP.get(d);
+                const arrive = samediEstArrive(d);
+                const absent = st === 'absent' || (!st && arrive);
                 return (
                   <div
                     key={d}
                     className={`rounded-lg border px-3 py-2 text-center text-xs font-semibold ${
                       st === 'present'
                         ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                        : st === 'absent'
+                        : absent
                           ? 'border-red-200 bg-red-50 text-alerte'
                           : 'border-slate-200 bg-slate-50 text-slate-400'
                     }`}
                   >
                     <div>Samedi {fmtDate(d).slice(0, 5)}</div>
                     <div className="text-lg">
-                      {st === 'present' ? '✓' : st === 'absent' ? '✗' : '—'}
+                      {st === 'present' ? '✓' : absent ? '✗' : '—'}
                     </div>
+                    {!st && !arrive && (
+                      <div className="text-[10px] font-medium">à venir</div>
+                    )}
                   </div>
                 );
               })}
@@ -600,17 +606,22 @@ export default function LecteurProfil() {
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {samedisC.map((d) => {
                 const m = cotMoisC.get(d);
+                const du = !m && samediEstArrive(d);
                 return (
                   <div
                     key={d}
                     className={`rounded-lg border px-3 py-2 text-center text-xs font-semibold ${
                       m
                         ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                        : 'border-red-200 bg-red-50 text-alerte'
+                        : du
+                          ? 'border-red-200 bg-red-50 text-alerte'
+                          : 'border-slate-200 bg-slate-50 text-slate-400'
                     }`}
                   >
                     <div>Samedi {fmtDate(d).slice(0, 5)}</div>
-                    <div className="text-sm">{m ? `${m} F ✓` : 'dû'}</div>
+                    <div className="text-sm">
+                      {m ? `${m} F ✓` : du ? 'dû' : '—'}
+                    </div>
                   </div>
                 );
               })}
@@ -624,8 +635,8 @@ export default function LecteurProfil() {
               <span className="font-bold text-alerte">
                 {fmtMoney(
                   samedisC
-                    .filter((d) => !cotMoisC.get(d))
-                    .reduce((s, d) => s + (cotMoisC.get(d) ?? montantCot), 0)
+                    .filter((d) => !cotMoisC.get(d) && samediEstArrive(d))
+                    .reduce((s) => s + montantCot, 0)
                 )}
               </span>
             </div>

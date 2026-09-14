@@ -5,18 +5,26 @@ import { useAuth } from '../context/AuthContext';
 import {
   dateISO,
   deplaceMois,
+  deplaceSemaine,
+  dimancheDeSemaine,
   fmtDate,
   fmtMoney,
+  lundiDeSemaine,
   moisLabel,
+  samediEstArrive,
   samedisDuMois,
+  samedisSemaine,
+  semaineLabel,
 } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
 import type { Cotisation, Fraternite, Lecteur } from '../lib/types';
 import {
   BtnGhost,
   EmptyState,
+  iconPressCls,
   inputCls,
   PageHeader,
+  Segmented,
   Spinner,
   StatCard,
   StepNav,
@@ -24,14 +32,19 @@ import {
 } from '../components/ui';
 import { exportCotisations } from '../pdf/export';
 
+/** Vue mensuelle (tous les samedis du mois) ou hebdomadaire (un seul samedi). */
+type ModeVue = 'mois' | 'semaine';
+
 export default function Cotisations() {
   const { profile } = useAuth();
   const isCaissier = profile?.role === 'caissier';
   const { toast } = useToast();
 
   const now = new Date();
+  const [mode, setMode] = useState<ModeVue>('mois');
   const [annee, setAnnee] = useState(now.getFullYear());
   const [mois, setMois] = useState(now.getMonth());
+  const [semaine, setSemaine] = useState<Date>(lundiDeSemaine(now));
   const [fId, setFId] = useState('');
   const [search, setSearch] = useState('');
 
@@ -43,9 +56,25 @@ export default function Cotisations() {
   const [busyPdf, setBusyPdf] = useState(false);
   const [celluleActive, setCelluleActive] = useState<string | null>(null);
 
-  const samedis = useMemo(
-    () => samedisDuMois(annee, mois).map(dateISO),
-    [annee, mois]
+  /**
+   * Samedis affichés : une seule colonne en vue hebdomadaire, pour que le
+   * Caissier pointe tout le monde d'un coup sans faire défiler le tableau.
+   */
+  const samedis = useMemo<string[]>(
+    () =>
+      mode === 'semaine'
+        ? samedisSemaine(semaine).map(dateISO)
+        : samedisDuMois(annee, mois).map(dateISO),
+    [mode, semaine, annee, mois]
+  );
+
+  const periodeLabel =
+    mode === 'semaine' ? semaineLabel(semaine) : moisLabel(annee, mois);
+
+  /** Seuls les samedis déjà arrivés génèrent une cotisation due. */
+  const samedisArrivesListe = useMemo(
+    () => samedis.filter(samediEstArrive),
+    [samedis]
   );
 
   const load = useCallback(async () => {
@@ -138,98 +167,157 @@ export default function Cotisations() {
     load();
   }
 
-  // Totaux sur la vue filtrée
-  const totalPaye = filtered.reduce((s, l) => {
-    return (
-      s + samedis.reduce((ss, sam) => ss + (map.get(`${l.id}|${sam}`)?.paye ? map.get(`${l.id}|${sam}`)!.montant : 0), 0)
-    );
-  }, 0);
+  // --------------------------------------------------------------- totaux
+  const totalPaye = filtered.reduce(
+    (s, l) =>
+      s +
+      samedis.reduce(
+        (ss, sam) =>
+          ss + (map.get(`${l.id}|${sam}`)?.paye ? map.get(`${l.id}|${sam}`)!.montant : 0),
+        0
+      ),
+    0
+  );
+  /** Samedis arrivés et non réglés — les samedis à venir ne comptent pas. */
   const nbDu = filtered.reduce(
-    (s, l) => s + samedis.filter((sam) => !map.get(`${l.id}|${sam}`)?.paye).length,
+    (s, l) =>
+      s + samedisArrivesListe.filter((sam) => !map.get(`${l.id}|${sam}`)?.paye).length,
     0
   );
 
+  function allerPrecedent() {
+    if (mode === 'semaine') setSemaine(deplaceSemaine(semaine, -1));
+    else {
+      const d = deplaceMois(annee, mois, -1);
+      setAnnee(d.annee);
+      setMois(d.mois);
+    }
+  }
+
+  function allerSuivant() {
+    if (mode === 'semaine') setSemaine(deplaceSemaine(semaine, 1));
+    else {
+      const d = deplaceMois(annee, mois, 1);
+      setAnnee(d.annee);
+      setMois(d.mois);
+    }
+  }
+
+  function revenirAujourdhui() {
+    const t = new Date();
+    setAnnee(t.getFullYear());
+    setMois(t.getMonth());
+    setSemaine(lundiDeSemaine(t));
+  }
+
   if (loading) return <Spinner label="Chargement des cotisations…" />;
 
-  const estMoisCourant =
-    annee === now.getFullYear() && mois === now.getMonth();
+  const peutExporter =
+    profile?.role === 'admin' || profile?.role === 'co' || isCaissier;
 
   return (
     <div>
       <PageHeader
         title="Cotisations"
-        sub={`${fmtMoney(montantCot)} par lecteur et par samedi — saisie réservée aux Caissiers (pas de gel : mois passés modifiables)`}
+        sub={`${fmtMoney(montantCot)} par lecteur et par samedi — saisie réservée aux Caissiers`}
         actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <StepNav
-              label={moisLabel(annee, mois)}
-              onPrev={() => {
-                const d = deplaceMois(annee, mois, -1);
-                setAnnee(d.annee);
-                setMois(d.mois);
+          peutExporter ? (
+            <BtnGhost
+              busy={busyPdf}
+              busyLabel="PDF…"
+              onClick={async () => {
+                setBusyPdf(true);
+                try {
+                  exportCotisations({
+                    annee,
+                    mois,
+                    fraternite: fraternites.find((f) => f.id === fId)?.nom ?? null,
+                    lecteurs: filtered,
+                    cotisations,
+                    montantCot,
+                    auteur: profile?.full_name ?? '—',
+                    samedis,
+                    periode: periodeLabel,
+                  });
+                  await supabase.rpc('log_action', {
+                    p_action: 'export.pdf',
+                    p_objet_type: 'cotisations',
+                    p_objet_ref: `${annee}-${String(mois + 1).padStart(2, '0')}`,
+                    p_detail: JSON.stringify({
+                      document: 'fiche_cotisations',
+                      vue: mode,
+                      fraternite: fId || 'globale',
+                    }),
+                  });
+                  toast('PDF généré.');
+                } catch (err) {
+                  toast(traduireErreur(err, 'générer le PDF des cotisations'), 'err');
+                } finally {
+                  setBusyPdf(false);
+                }
               }}
-              onNext={() => {
-                const d = deplaceMois(annee, mois, 1);
-                setAnnee(d.annee);
-                setMois(d.mois);
-              }}
-            />
-            {(profile?.role === 'admin' ||
-              profile?.role === 'co' ||
-              profile?.role === 'caissier') && (
-              <BtnGhost
-                busy={busyPdf}
-                busyLabel="PDF…"
-                onClick={async () => {
-                  setBusyPdf(true);
-                  try {
-                    exportCotisations({
-                      annee,
-                      mois,
-                      fraternite: fraternites.find((f) => f.id === fId)?.nom ?? null,
-                      lecteurs: filtered,
-                      cotisations,
-                      montantCot,
-                      auteur: profile?.full_name ?? '—',
-                    });
-                    await supabase.rpc('log_action', {
-                      p_action: 'export.pdf',
-                      p_objet_type: 'cotisations',
-                      p_objet_ref: `${annee}-${String(mois + 1).padStart(2, '0')}`,
-                      p_detail: JSON.stringify({
-                        document: 'fiche_cotisations',
-                        fraternite: fId || 'globale',
-                      }),
-                    });
-                    toast('PDF généré.');
-                  } catch (err) {
-                    toast(traduireErreur(err, 'générer le PDF des cotisations'), 'err');
-                  } finally {
-                    setBusyPdf(false);
-                  }
-                }}
-              >
-                ⬇ PDF
-              </BtnGhost>
-            )}
-          </div>
+            >
+              ⬇ PDF
+            </BtnGhost>
+          ) : undefined
         }
       />
+
+      {/* ------------------------------------------------- vue + navigation */}
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <Segmented
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: 'mois', label: 'Vue mensuelle', icon: '🗓️' },
+            { value: 'semaine', label: 'Vue hebdomadaire', icon: '📆' },
+          ]}
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <StepNav
+            label={periodeLabel}
+            width="min-w-[190px]"
+            onPrev={allerPrecedent}
+            onNext={allerSuivant}
+          />
+          <button
+            onClick={revenirAujourdhui}
+            className={`${iconPressCls} px-3 py-2 text-xs font-semibold text-cdlj`}
+          >
+            Aujourd'hui
+          </button>
+        </div>
+      </div>
+
+      {mode === 'semaine' && (
+        <p className="mb-4 text-xs text-slate-400">
+          Vue hebdomadaire : une seule case devant chaque lecteur — le samedi{' '}
+          <strong className="text-slate-500">
+            {samedis[0] ? fmtDate(samedis[0]) : '—'}
+          </strong>{' '}
+          (semaine du {fmtDate(lundiDeSemaine(semaine))} au{' '}
+          {fmtDate(dimancheDeSemaine(semaine))}).
+        </p>
+      )}
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard
           label="Total payé (vue)"
           value={fmtMoney(totalPaye)}
           tone="green"
-          sub={moisLabel(annee, mois)}
+          sub={periodeLabel}
         />
         <StatCard
           label="Cotisations dues (vue)"
           value={fmtMoney(nbDu * montantCot)}
           tone="red"
-          sub={`${nbDu} samedi(s) non payé(s)`}
+          sub={`${nbDu} samedi(s) arrivé(s) non réglé(s)`}
         />
-        <StatCard label="Samedis du mois" value={samedis.length} />
+        <StatCard
+          label="Samedis comptés"
+          value={samedisArrivesListe.length}
+          sub={`${samedis.length} affiché(s) — à venir exclus`}
+        />
         <StatCard
           label="Lecteurs (vue)"
           value={filtered.length}
@@ -242,7 +330,8 @@ export default function Cotisations() {
         <select
           value={fId}
           onChange={(e) => setFId(e.target.value)}
-          className={`${inputCls} w-auto`}
+          aria-label="Filtrer par fraternité"
+          className={`${inputCls} w-full sm:w-auto`}
         >
           <option value="">Vue globale — toutes les fraternités</option>
           {fraternites.map((f) => (
@@ -255,7 +344,8 @@ export default function Cotisations() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Rechercher un lecteur (matricule…)"
-          className={`${inputCls} max-w-xs flex-1`}
+          aria-label="Rechercher un lecteur"
+          className={`${inputCls} min-w-0 flex-1 sm:max-w-xs`}
         />
       </div>
 
@@ -263,14 +353,25 @@ export default function Cotisations() {
         <EmptyState msg="Aucun lecteur actif pour cette vue." />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full min-w-[560px] text-left text-sm">
+          <table
+            className={`w-full text-left text-sm ${
+              mode === 'semaine' ? 'min-w-[460px]' : 'min-w-[560px]'
+            }`}
+          >
             <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-3 py-3">Matricule</th>
                 <th className="px-3 py-3">Lecteur</th>
                 {samedis.map((s) => (
                   <th key={s} className="px-2 py-3 text-center">
-                    {fmtDate(s).slice(0, 5)}
+                    <span className="block whitespace-nowrap">
+                      {fmtDate(s).slice(0, 5)}
+                    </span>
+                    {!samediEstArrive(s) && (
+                      <span className="mt-1 inline-block rounded bg-slate-100 px-1 text-[10px] font-bold text-slate-400">
+                        À VENIR
+                      </span>
+                    )}
                   </th>
                 ))}
                 <th className="px-2 py-3 text-right">Payé</th>
@@ -284,14 +385,14 @@ export default function Cotisations() {
                 samedis.forEach((sam) => {
                   const c = map.get(`${l.id}|${sam}`);
                   if (c?.paye) paye += c.montant;
-                  else du += 1;
+                  else if (samediEstArrive(sam)) du += 1;
                 });
                 return (
                   <tr key={l.id} className="hover:bg-slate-50/60">
                     <td className="px-3 py-2 font-mono text-xs font-semibold text-cdlj">
                       {l.matricule}
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="max-w-[220px] truncate px-3 py-2">
                       <Link
                         to={`/lecteurs/${l.id}`}
                         className="font-medium text-slate-700 hover:text-cdlj"
@@ -301,32 +402,46 @@ export default function Cotisations() {
                     </td>
                     {samedis.map((sam) => {
                       const c = map.get(`${l.id}|${sam}`);
+                      const arrive = samediEstArrive(sam);
+                      // Rouge par défaut dès que le samedi est arrivé :
+                      // tant que le paiement n'est pas déclaré, il est dû.
+                      const duCeSamedi = !c?.paye && arrive;
                       return (
                         <td key={sam} className="px-2 py-2 text-center">
                           <button
                             onClick={() => toggle(l, sam)}
                             disabled={!isCaissier}
-                            title={
-                              isCaissier
-                                ? 'Cliquez pour basculer payé/dû'
-                                : 'Lecture seule'
-                            }
                             aria-busy={celluleActive === `${l.id}|${sam}` || undefined}
+                            title={
+                              !isCaissier
+                                ? "Lecture seule — saisie réservée aux Caissiers"
+                                : c?.paye
+                                  ? 'Payé — cliquez pour repasser en dû'
+                                  : duCeSamedi
+                                    ? 'Dû — cliquez pour déclarer le paiement'
+                                    : 'Samedi à venir — pas encore comptabilisé'
+                            }
                             className={`min-w-[52px] rounded-md px-2 py-1.5 text-xs font-bold transition-all duration-150 active:scale-90 ${
                               c?.paye
                                 ? 'bg-emerald-500 text-white'
-                                : 'bg-red-50 text-alerte ring-1 ring-inset ring-red-200'
-                            } ${isCaissier ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
+                                : duCeSamedi
+                                  ? 'bg-alerte text-white'
+                                  : 'border border-dashed border-slate-300 text-slate-400'
+                            } ${
+                              isCaissier
+                                ? 'cursor-pointer hover:opacity-80'
+                                : 'cursor-default'
+                            }`}
                           >
-                            {c?.paye ? `${c.montant} F ✓` : 'dû'}
+                            {c?.paye ? `${c.montant} F ✓` : duCeSamedi ? 'dû' : '—'}
                           </button>
                         </td>
                       );
                     })}
-                    <td className="px-2 py-2 text-right text-xs font-bold text-emerald-600">
+                    <td className="whitespace-nowrap px-2 py-2 text-right text-xs font-bold text-emerald-600">
                       {fmtMoney(paye)}
                     </td>
-                    <td className="px-2 py-2 text-right text-xs font-bold text-alerte">
+                    <td className="whitespace-nowrap px-2 py-2 text-right text-xs font-bold text-alerte">
                       {fmtMoney(du * montantCot)}
                     </td>
                   </tr>
@@ -338,9 +453,11 @@ export default function Cotisations() {
       )}
 
       <p className="mt-3 text-xs text-slate-400">
-        Un lecteur absent un samedi voit sa cotisation « due » — l'absence ne
-        dispense pas du paiement. Suivi des dettes sur le mois courant ; les mois
-        passés restent conservés et consultables.
+        Par défaut, un samedi arrivé est <strong className="text-alerte">dû</strong> :
+        tant que le Caissier n'a pas basculé la case au vert, le lecteur est
+        considéré comme n'ayant pas payé. L'absence ne dispense pas du paiement.
+        Les samedis à venir ne sont pas comptabilisés. Les mois passés restent
+        conservés et consultables.
       </p>
     </div>
   );

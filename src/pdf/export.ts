@@ -5,6 +5,8 @@ import {
   fmtDate,
   fmtMoney,
   moisLabel,
+  samediEstArrive,
+  samedisArrives,
   samedisDuMois,
 } from '../lib/dates';
 import type {
@@ -84,31 +86,37 @@ export function exportCotisations(args: {
   cotisations: Cotisation[];
   montantCot: number;
   auteur: string;
+  /** Samedis à exporter (ISO). Par défaut : tous les samedis du mois. */
+  samedis?: string[];
+  /** Libellé de période (vue hebdomadaire, samedi précis…). */
+  periode?: string;
 }) {
   const { annee, mois, fraternite, lecteurs, cotisations, montantCot, auteur } = args;
   const doc = new jsPDF({ orientation: 'landscape' });
-  const samedis = samedisDuMois(annee, mois);
+  const samedisIso = args.samedis ?? samedisDuMois(annee, mois).map(dateISO);
   const map = new Map(cotisations.map((c) => [`${c.lecteur_id}|${c.date_samedi}`, c]));
 
   const y = entete(
     doc,
-    'Fiche mensuelle des cotisations',
-    `${moisLabel(annee, mois)}${fraternite ? ` — ${fraternite}` : ' — vue globale'}`,
+    'Fiche des cotisations',
+    `${args.periode ?? moisLabel(annee, mois)}${fraternite ? ` — ${fraternite}` : ' — vue globale'}`,
     auteur
   );
 
   const head = [
-    ['Matricule', 'Nom', 'Prénom', ...samedis.map((s) => dateISO(s).slice(0, 5)), 'Total payé', 'Total dû'],
+    ['Matricule', 'Nom', 'Prénom', ...samedisIso.map((s) => s.slice(5).split('-').reverse().join('/')), 'Total payé', 'Total dû'],
   ];
   const body = lecteurs.map((l) => {
     let paye = 0;
     let du = 0;
-    const cells = samedis.map((s) => {
-      const c = map.get(`${l.id}|${dateISO(s)}`);
+    const cells = samedisIso.map((s) => {
+      const c = map.get(`${l.id}|${s}`);
       if (c?.paye) {
         paye += c.montant;
         return `${c.montant} F`;
       }
+      // Un samedi qui n'est pas encore arrivé ne génère pas de dette.
+      if (!samediEstArrive(s)) return '—';
       du += 1;
       return 'Dû';
     });
@@ -130,30 +138,41 @@ export function exportPresences(args: {
   lecteurs: Lecteur[];
   presences: Presence[];
   auteur: string;
+  /** Samedis à exporter (ISO). Par défaut : tous les samedis du mois. */
+  samedis?: string[];
+  /** Libellé de période (vue hebdomadaire, samedi précis…). */
+  periode?: string;
 }) {
   const { annee, mois, fraternite, lecteurs, presences, auteur } = args;
   const doc = new jsPDF({ orientation: 'landscape' });
-  const samedis = samedisDuMois(annee, mois);
+  const samedisIso = args.samedis ?? samedisDuMois(annee, mois).map(dateISO);
   const map = new Map(presences.map((p) => [`${p.lecteur_id}|${p.date_samedi}`, p]));
 
   const y = entete(
     doc,
-    'Fiche mensuelle des présences',
-    `${moisLabel(annee, mois)}${fraternite ? ` — ${fraternite}` : ' — vue globale'}`,
+    'Fiche des présences',
+    `${args.periode ?? moisLabel(annee, mois)}${fraternite ? ` — ${fraternite}` : ' — vue globale'}`,
     auteur
   );
 
   const head = [
-    ['Matricule', 'Nom', 'Prénom', ...samedis.map((s) => dateISO(s).slice(0, 5)), 'Présents', 'Absents'],
+    ['Matricule', 'Nom', 'Prénom', ...samedisIso.map((s) => s.slice(5).split('-').reverse().join('/')), 'Présents', 'Absents'],
   ];
   const body = lecteurs.map((l) => {
     let pres = 0;
     let abs = 0;
-    const cells = samedis.map((s) => {
-      const p = map.get(`${l.id}|${dateISO(s)}`);
-      if (p?.statut === 'present') pres++;
-      else if (p?.statut === 'absent') abs++;
-      return p?.statut === 'present' ? '✓' : p?.statut === 'absent' ? '✗' : '—';
+    const cells = samedisIso.map((s) => {
+      const p = map.get(`${l.id}|${s}`);
+      // À preuve du contraire : un samedi arrivé non pointé compte comme absent.
+      if (p?.statut === 'present') {
+        pres++;
+        return '✓';
+      }
+      if (p?.statut === 'absent' || samediEstArrive(s)) {
+        abs++;
+        return '✗';
+      }
+      return '—';
     });
     return [l.matricule, l.nom.toUpperCase(), l.prenom, ...cells, String(pres), String(abs)];
   });
@@ -325,18 +344,22 @@ export function exportFicheLecteur(args: {
   const rows: string[][] = [];
   for (let i = 11; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const sam = samedisDuMois(d.getFullYear(), d.getMonth()).map(dateISO);
+    // Seuls les samedis déjà arrivés sont comptabilisés.
+    const sam = samedisArrives(
+      samedisDuMois(d.getFullYear(), d.getMonth()).map(dateISO)
+    );
     const p = presences.filter((x) => sam.includes(x.date_samedi));
+    const pres = p.filter((x) => x.statut === 'present').length;
+    // À preuve du contraire : un samedi arrivé non pointé compte comme absent.
     rows.push([
       d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }),
-      String(p.filter((x) => x.statut === 'present').length),
-      String(p.filter((x) => x.statut === 'absent').length),
-      String(sam.length - p.length),
+      String(pres),
+      String(Math.max(sam.length - pres, 0)),
     ]);
   }
   table(doc, {
     startY: cursor,
-    head: [['Mois', 'Présents', 'Absents', 'Non saisis']],
+    head: [['Mois', 'Présents', 'Absents']],
     body: rows,
   });
   cursor = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
@@ -349,10 +372,13 @@ export function exportFicheLecteur(args: {
   const rowsC: string[][] = [];
   for (let i = 11; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const sam = samedisDuMois(d.getFullYear(), d.getMonth()).map(dateISO);
+    const sam = samedisArrives(
+      samedisDuMois(d.getFullYear(), d.getMonth()).map(dateISO)
+    );
     const c = cotisations.filter((x) => sam.includes(x.date_samedi));
     const paye = c.filter((x) => x.paye).reduce((s, x) => s + x.montant, 0);
-    const du = (sam.length - c.filter((x) => x.paye).length) * montantCot;
+    // Les samedis à venir ne génèrent aucune dette.
+    const du = Math.max(sam.length - c.filter((x) => x.paye).length, 0) * montantCot;
     rowsC.push([
       d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }),
       fmtMoney(paye),
