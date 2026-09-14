@@ -2,7 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
-import { fmtDate, fmtDateHeure } from '../lib/dates';
+import { fmtDateHeure } from '../lib/dates';
+import { traduireErreur } from '../lib/errors';
+import {
+  anneeCourante,
+  bornesAnneeAdhesion,
+  bornesAnneeNaissance,
+  validerAnneesLecteur,
+} from '../lib/validation';
 import type { Fraternite, Grade, Lecteur } from '../lib/types';
 import {
   Badge,
@@ -13,6 +20,7 @@ import {
   inputCls,
   Modal,
   PageHeader,
+  pressCls,
   Spinner,
   useToast,
 } from '../components/ui';
@@ -57,6 +65,7 @@ export default function Lecteurs() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<FormLecteur>(FORM_VIDE);
   const [busy, setBusy] = useState(false);
+  const [busyArchivage, setBusyArchivage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [rL, rF, rG] = await Promise.all([
@@ -114,6 +123,13 @@ export default function Lecteurs() {
       toast('Nom et prénom sont obligatoires.', 'err');
       return;
     }
+    // Ni l'année de naissance ni l'année d'adhésion ne peuvent dépasser
+    // l'année en cours.
+    const v = validerAnneesLecteur(form.date_naissance, form.annee_adhesion);
+    if (!v.ok) {
+      toast(v.message ?? 'Saisie invalide.', 'err');
+      return;
+    }
     setBusy(true);
     const payload = {
       nom: form.nom.trim(),
@@ -145,7 +161,10 @@ export default function Lecteurs() {
       setFormOpen(false);
       load();
     } catch (e) {
-      toast(e instanceof Error ? e.message : 'Erreur lors de l’enregistrement.', 'err');
+      toast(
+        traduireErreur(e, editId ? 'mettre à jour cette fiche' : 'créer ce lecteur'),
+        'err'
+      );
     } finally {
       setBusy(false);
     }
@@ -158,22 +177,26 @@ export default function Lecteurs() {
       )
     )
       return;
+    setBusyArchivage(l.id);
     const { error } = await supabase
       .from('lecteurs')
       .update({ archived: true, archived_at: new Date().toISOString() })
       .eq('id', l.id);
-    if (error) toast(error.message, 'err');
+    setBusyArchivage(null);
+    if (error) toast(traduireErreur(error, 'archiver ce lecteur'), 'err');
     else toast('Lecteur archivé.');
     load();
   }
 
   async function restaurer(l: Lecteur) {
     if (!confirm(`Restaurer ${l.matricule} — ${l.prenom} ${l.nom} ?`)) return;
+    setBusyArchivage(l.id);
     const { error } = await supabase
       .from('lecteurs')
       .update({ archived: false, archived_at: null })
       .eq('id', l.id);
-    if (error) toast(error.message, 'err');
+    setBusyArchivage(null);
+    if (error) toast(traduireErreur(error, 'restaurer ce lecteur'), 'err');
     else toast('Lecteur restauré.');
     load();
   }
@@ -198,7 +221,8 @@ export default function Lecteurs() {
         <div className="flex rounded-lg border border-slate-200 bg-white p-0.5">
           <button
             onClick={() => setTab('actifs')}
-            className={`rounded-md px-3 py-1.5 text-sm font-semibold ${
+            aria-pressed={tab === 'actifs'}
+            className={`rounded-md px-3 py-1.5 text-sm font-semibold ${pressCls} ${
               tab === 'actifs' ? 'bg-cdlj text-white' : 'text-slate-600'
             }`}
           >
@@ -207,7 +231,8 @@ export default function Lecteurs() {
           {canEdit && (
             <button
               onClick={() => setTab('archives')}
-              className={`rounded-md px-3 py-1.5 text-sm font-semibold ${
+              aria-pressed={tab === 'archives'}
+              className={`rounded-md px-3 py-1.5 text-sm font-semibold ${pressCls} ${
                 tab === 'archives' ? 'bg-cdlj text-white' : 'text-slate-600'
               }`}
             >
@@ -280,13 +305,14 @@ export default function Lecteurs() {
                     <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                       <button
                         onClick={() => openEdit(l)}
-                        className="mr-2 text-xs font-semibold text-cdlj hover:underline"
+                        className={`mr-2 text-xs font-semibold text-cdlj hover:underline ${pressCls}`}
                       >
                         Modifier
                       </button>
                       <button
                         onClick={() => archiver(l)}
-                        className="text-xs font-semibold text-alerte hover:underline"
+                        disabled={busyArchivage === l.id}
+                        className={`text-xs font-semibold text-alerte hover:underline ${pressCls}`}
                       >
                         Archiver
                       </button>
@@ -339,14 +365,22 @@ export default function Lecteurs() {
                 type="date"
                 className={inputCls}
                 value={form.date_naissance}
+                max={bornesAnneeNaissance().max}
+                min={bornesAnneeNaissance().min}
                 onChange={(e) => setForm({ ...form, date_naissance: e.target.value })}
               />
             </Field>
-            <Field label="Année d'adhésion">
+            <Field
+              label="Année d'adhésion"
+              hint={`De ${bornesAnneeAdhesion().min} à ${anneeCourante()} (année en cours au maximum)`}
+            >
               <input
                 type="number"
                 className={inputCls}
                 value={form.annee_adhesion}
+                inputMode="numeric"
+                min={bornesAnneeAdhesion().min}
+                max={bornesAnneeAdhesion().max}
                 onChange={(e) => setForm({ ...form, annee_adhesion: e.target.value })}
               />
             </Field>
@@ -401,8 +435,8 @@ export default function Lecteurs() {
           )}
           <div className="flex justify-end gap-2 pt-2">
             <BtnGhost onClick={() => setFormOpen(false)}>Annuler</BtnGhost>
-            <BtnPrimary onClick={save} disabled={busy}>
-              {busy ? 'Enregistrement…' : 'Enregistrer'}
+            <BtnPrimary onClick={save} busy={busy} busyLabel="Enregistrement…">
+              Enregistrer
             </BtnPrimary>
           </div>
         </div>

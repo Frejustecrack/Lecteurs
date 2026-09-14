@@ -35,7 +35,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {items.map((t) => (
           <div
             key={t.id}
-            className={`rounded-lg px-4 py-3 text-sm font-medium text-white shadow-lg ${
+            role={t.type === 'ok' ? 'status' : 'alert'}
+            className={`cdlj-toast rounded-lg px-4 py-3 text-sm font-medium text-white shadow-lg ${
               t.type === 'ok' ? 'bg-emerald-600' : 'bg-alerte'
             }`}
           >
@@ -139,7 +140,10 @@ export function Modal({
         aria-hidden
       />
       <div
-        className={`relative z-10 max-h-[92vh] w-full overflow-y-auto rounded-t-2xl bg-white p-5 shadow-xl sm:rounded-2xl ${
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className={`cdlj-modal relative z-10 max-h-[92vh] w-full overflow-y-auto rounded-t-2xl bg-white p-5 shadow-xl sm:rounded-2xl ${
           wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'
         }`}
       >
@@ -189,44 +193,113 @@ export function Field({
 export const inputCls =
   'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-cdlj focus:outline-none focus:ring-2 focus:ring-cdlj/20';
 
+/**
+ * Classes de « retour au clic » partagées par tous les boutons de l'application :
+ *  - `active:scale-…`  → le bouton s'enfonce visiblement sous le doigt / la souris ;
+ *  - `touch-manipulation` → supprime le délai de double-tap sur mobile ;
+ *  - `focus-visible:ring` → repère clavier visible sans polluer le clic souris.
+ */
+export const pressCls =
+  'select-none touch-manipulation transition-[transform,box-shadow,background-color,color] duration-150 ease-out active:scale-[0.96] active:duration-75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cdlj/45 focus-visible:ring-offset-1 disabled:pointer-events-none disabled:opacity-50';
+
+/** Petit bouton « icône » (flèches de mois, fermeture…) avec le même ressenti. */
+export const iconPressCls =
+  'select-none touch-manipulation rounded-lg border border-slate-200 bg-white transition-all duration-150 ease-out hover:bg-slate-50 active:scale-[0.9] active:duration-75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cdlj/45 disabled:pointer-events-none disabled:opacity-40';
+
+/** Petit spinner blanc/bleu affiché dans un bouton occupé. */
+export function BtnSpinner({ tone = 'light' }: { tone?: 'light' | 'dark' }) {
+  return (
+    <span
+      aria-hidden
+      className={`inline-block h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 ${
+        tone === 'light'
+          ? 'border-white/70 border-t-transparent'
+          : 'border-cdlj border-t-transparent'
+      }`}
+    />
+  );
+}
+
+type BtnProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  /** Affiche un spinner et bloque le bouton pendant l'opération. */
+  busy?: boolean;
+  /** Texte affiché à la place du libellé pendant l'opération. */
+  busyLabel?: string;
+};
+
+function Contenu({
+  busy,
+  busyLabel,
+  children,
+  tone,
+}: Pick<BtnProps, 'busy' | 'busyLabel' | 'children'> & { tone: 'light' | 'dark' }) {
+  return (
+    <span className="flex items-center justify-center gap-2">
+      {busy && <BtnSpinner tone={tone} />}
+      {busy ? (busyLabel ?? 'En cours…') : children}
+    </span>
+  );
+}
+
 export function BtnPrimary({
   children,
+  busy,
+  busyLabel,
+  disabled,
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+}: BtnProps) {
   return (
     <button
       {...props}
-      className={`rounded-lg bg-cdlj px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-cdlj-dark disabled:cursor-not-allowed disabled:opacity-50 ${props.className ?? ''}`}
+      disabled={disabled || busy}
+      aria-busy={busy || undefined}
+      className={`rounded-lg bg-cdlj px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-cdlj-dark active:shadow-none ${pressCls} ${props.className ?? ''}`}
     >
-      {children}
+      <Contenu busy={busy} busyLabel={busyLabel} tone="light">
+        {children}
+      </Contenu>
     </button>
   );
 }
 
 export function BtnGhost({
   children,
+  busy,
+  busyLabel,
+  disabled,
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+}: BtnProps) {
   return (
     <button
       {...props}
-      className={`rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${props.className ?? ''}`}
+      disabled={disabled || busy}
+      aria-busy={busy || undefined}
+      className={`rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 active:bg-slate-100 ${pressCls} ${props.className ?? ''}`}
     >
-      {children}
+      <Contenu busy={busy} busyLabel={busyLabel} tone="dark">
+        {children}
+      </Contenu>
     </button>
   );
 }
 
 export function BtnDanger({
   children,
+  busy,
+  busyLabel,
+  disabled,
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+}: BtnProps) {
   return (
     <button
       {...props}
-      className={`rounded-lg bg-alerte px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 ${props.className ?? ''}`}
+      disabled={disabled || busy}
+      aria-busy={busy || undefined}
+      className={`rounded-lg bg-alerte px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 active:shadow-none ${pressCls} ${props.className ?? ''}`}
     >
-      {children}
+      <Contenu busy={busy} busyLabel={busyLabel} tone="light">
+        {children}
+      </Contenu>
     </button>
   );
 }
@@ -256,6 +329,85 @@ export function PageHeader({
         {sub && <p className="mt-0.5 text-sm text-slate-500">{sub}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Segmented
+/**
+ * Groupe de boutons à choix unique (onglets / filtres).
+ * Utilisé partout où l'on bascule entre deux ou plusieurs vues.
+ */
+export function Segmented<T extends string>({
+  value,
+  options,
+  onChange,
+  size = 'md',
+}: {
+  value: T;
+  options: { value: T; label: string; icon?: string }[];
+  onChange: (v: T) => void;
+  size?: 'sm' | 'md';
+}) {
+  const pad = size === 'sm' ? 'px-2.5 py-1 text-xs' : 'px-4 py-1.5 text-sm';
+  return (
+    <div
+      role="tablist"
+      className="inline-flex w-full rounded-lg border border-slate-200 bg-white p-0.5 sm:w-auto"
+    >
+      {options.map((o) => {
+        const actif = o.value === value;
+        return (
+          <button
+            key={o.value}
+            role="tab"
+            aria-selected={actif}
+            onClick={() => onChange(o.value)}
+            className={`${pressCls} ${pad} flex-1 whitespace-nowrap rounded-md font-semibold sm:flex-none ${
+              actif ? 'bg-cdlj text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            {o.icon ? <span className="mr-1">{o.icon}</span> : null}
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- MonthNav
+/** Navigation précédent / suivant réutilisable (mois, semaine…). */
+export function StepNav({
+  onPrev,
+  onNext,
+  label,
+  width = 'min-w-[150px]',
+}: {
+  onPrev: () => void;
+  onNext: () => void;
+  label: string;
+  width?: string;
+}) {
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        onClick={onPrev}
+        aria-label="Précédent"
+        className={`${iconPressCls} px-3 py-2 text-sm font-semibold`}
+      >
+        ←
+      </button>
+      <span className={`${width} px-1 text-center text-sm font-bold text-slate-700`}>
+        {label}
+      </span>
+      <button
+        onClick={onNext}
+        aria-label="Suivant"
+        className={`${iconPressCls} px-3 py-2 text-sm font-semibold`}
+      >
+        →
+      </button>
     </div>
   );
 }

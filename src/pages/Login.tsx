@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Navigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import { traduireErreur } from '../lib/errors';
 import { BtnPrimary, Field, inputCls } from '../components/ui';
 
 // Domaines internes réservés aux identifiants CDLJ (jamais utilisé pour l'envoi
@@ -24,16 +25,21 @@ export default function Login() {
     try {
       // L'utilisateur ne saisit que son identifiant ; l'application le mappe
       // vers l'identifiant interne de l'authentification.
-      const { error: err } = await supabase.auth.signInWithPassword({
-        email: username.trim().toLowerCase() + USERNAME_DOMAIN,
+      const identifiant = username.trim().toLowerCase();
+      const { data, error: err } = await supabase.auth.signInWithPassword({
+        email: identifiant + USERNAME_DOMAIN,
         password,
       });
       if (err) {
-        setError(
-          err.message === 'Invalid login credentials'
-            ? 'Identifiant ou mot de passe incorrect.'
-            : 'Connexion impossible : ' + err.message
-        );
+        setError(traduireErreur(err, 'vous connecter'));
+      } else if (data.session) {
+        // Cahier des charges §18 : chaque connexion est tracée dans les logs.
+        await supabase.rpc('log_action', {
+          p_action: 'compte.connexion',
+          p_objet_type: 'profiles',
+          p_objet_ref: data.session.user.id,
+          p_detail: JSON.stringify({ identifiant }),
+        });
       }
     } finally {
       setBusy(false);
@@ -90,8 +96,8 @@ export default function Login() {
                 {error}
               </div>
             )}
-            <BtnPrimary type="submit" disabled={busy} className="w-full">
-              {busy ? 'Connexion…' : 'Se connecter'}
+            <BtnPrimary type="submit" busy={busy} busyLabel="Connexion…" className="w-full">
+              Se connecter
             </BtnPrimary>
           </div>
           {profile && !profile.role && (

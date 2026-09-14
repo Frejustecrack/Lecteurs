@@ -10,13 +10,16 @@ import {
   moisLabel,
   samedisDuMois,
 } from '../lib/dates';
+import { traduireErreur } from '../lib/errors';
 import type { Cotisation, Fraternite, Lecteur } from '../lib/types';
 import {
+  BtnGhost,
   EmptyState,
   inputCls,
   PageHeader,
   Spinner,
   StatCard,
+  StepNav,
   useToast,
 } from '../components/ui';
 import { exportCotisations } from '../pdf/export';
@@ -37,6 +40,8 @@ export default function Cotisations() {
   const [cotisations, setCotisations] = useState<Cotisation[]>([]);
   const [montantCot, setMontantCot] = useState(50);
   const [loading, setLoading] = useState(true);
+  const [busyPdf, setBusyPdf] = useState(false);
+  const [celluleActive, setCelluleActive] = useState<string | null>(null);
 
   const samedis = useMemo(
     () => samedisDuMois(annee, mois).map(dateISO),
@@ -96,11 +101,15 @@ export default function Cotisations() {
 
   async function toggle(l: Lecteur, sam: string) {
     if (!isCaissier) {
-      toast('Seul un Caissier peut saisir les cotisations.', 'err');
+      toast(
+        "Vous n'êtes pas autorisé à saisir les cotisations : cette opération est réservée aux Caissiers.",
+        'err'
+      );
       return;
     }
     const current = map.get(`${l.id}|${sam}`);
     let error: { message: string } | null = null;
+    setCelluleActive(`${l.id}|${sam}`);
     if (current?.paye) {
       ({ error } = await supabase
         .from('cotisations')
@@ -121,8 +130,9 @@ export default function Cotisations() {
           { onConflict: 'lecteur_id,date_samedi' }
         ));
     }
+    setCelluleActive(null);
     if (error) {
-      toast(error.message, 'err');
+      toast(traduireErreur(error, 'enregistrer cette cotisation'), 'err');
       return;
     }
     load();
@@ -150,37 +160,28 @@ export default function Cotisations() {
         title="Cotisations"
         sub={`${fmtMoney(montantCot)} par lecteur et par samedi — saisie réservée aux Caissiers (pas de gel : mois passés modifiables)`}
         actions={
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => {
-                  const d = deplaceMois(annee, mois, -1);
-                  setAnnee(d.annee);
-                  setMois(d.mois);
-                }}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
-              >
-                ←
-              </button>
-              <span className="min-w-[150px] px-1 text-center text-sm font-bold text-slate-700">
-                {moisLabel(annee, mois)}
-              </span>
-              <button
-                onClick={() => {
-                  const d = deplaceMois(annee, mois, 1);
-                  setAnnee(d.annee);
-                  setMois(d.mois);
-                }}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
-              >
-                →
-              </button>
-            </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <StepNav
+              label={moisLabel(annee, mois)}
+              onPrev={() => {
+                const d = deplaceMois(annee, mois, -1);
+                setAnnee(d.annee);
+                setMois(d.mois);
+              }}
+              onNext={() => {
+                const d = deplaceMois(annee, mois, 1);
+                setAnnee(d.annee);
+                setMois(d.mois);
+              }}
+            />
             {(profile?.role === 'admin' ||
               profile?.role === 'co' ||
               profile?.role === 'caissier') && (
-              <button
+              <BtnGhost
+                busy={busyPdf}
+                busyLabel="PDF…"
                 onClick={async () => {
+                  setBusyPdf(true);
                   try {
                     exportCotisations({
                       annee,
@@ -202,13 +203,14 @@ export default function Cotisations() {
                     });
                     toast('PDF généré.');
                   } catch (err) {
-                    toast(err instanceof Error ? err.message : 'Erreur PDF.', 'err');
+                    toast(traduireErreur(err, 'générer le PDF des cotisations'), 'err');
+                  } finally {
+                    setBusyPdf(false);
                   }
                 }}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
                 ⬇ PDF
-              </button>
+              </BtnGhost>
             )}
           </div>
         }
@@ -309,7 +311,8 @@ export default function Cotisations() {
                                 ? 'Cliquez pour basculer payé/dû'
                                 : 'Lecture seule'
                             }
-                            className={`min-w-[52px] rounded-md px-2 py-1.5 text-xs font-bold ${
+                            aria-busy={celluleActive === `${l.id}|${sam}` || undefined}
+                            className={`min-w-[52px] rounded-md px-2 py-1.5 text-xs font-bold transition-all duration-150 active:scale-90 ${
                               c?.paye
                                 ? 'bg-emerald-500 text-white'
                                 : 'bg-red-50 text-alerte ring-1 ring-inset ring-red-200'

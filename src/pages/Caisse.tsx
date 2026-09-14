@@ -9,16 +9,18 @@ import {
   fmtMoney,
   moisLabel,
 } from '../lib/dates';
+import { traduireErreur } from '../lib/errors';
 import type { CaisseOperation, Cotisation, Lecteur, Profile } from '../lib/types';
 import {
   Badge,
+  BtnGhost,
   BtnPrimary,
   EmptyState,
-  Field,
   inputCls,
   PageHeader,
   Spinner,
   StatCard,
+  StepNav,
   useToast,
 } from '../components/ui';
 import { exportCaisse } from '../pdf/export';
@@ -31,23 +33,32 @@ interface Ligne {
   auteur: string;
 }
 
+/** Colonnes réellement utilisées — évite de charger des données inutiles. */
+const COLONNES_COT = 'lecteur_id, date_samedi, montant, paid_at, recorded_by';
+
 export default function Caisse() {
   const { profile } = useAuth();
   const isCO = profile?.role === 'co';
   const isAdmin = profile?.role === 'admin';
-  const canExport =
-    isAdmin || isCO || profile?.role === 'caissier' || profile?.role === 'responsable';
+  // Cahier des charges §17 : l'état de caisse est exportable par
+  // Admin, CO et Caissiers uniquement (les Responsables consultent sans exporter).
+  const canExport = isAdmin || isCO || profile?.role === 'caissier';
   const { toast } = useToast();
 
   const now = new Date();
   const [annee, setAnnee] = useState(now.getFullYear());
   const [mois, setMois] = useState(now.getMonth());
 
-  const [cotisations, setCotisations] = useState<Cotisation[]>([]);
+  /** Cotisations payées du mois affiché (mouvements + total mensuel). */
+  const [cotsMois, setCotsMois] = useState<Cotisation[]>([]);
+  /** Cotisations payées depuis l'origine (solde général + cumul annuel). */
+  const [cotsToutes, setCotsToutes] = useState<Cotisation[]>([]);
   const [ops, setOps] = useState<CaisseOperation[]>([]);
   const [lecteurs, setLecteurs] = useState<Lecteur[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [busyExport, setBusyExport] = useState(false);
+  const [busyOp, setBusyOp] = useState(false);
   const [opForm, setOpForm] = useState({
     type: 'encaissement' as 'encaissement' | 'decaissement',
     montant: '',
@@ -55,22 +66,29 @@ export default function Caisse() {
   });
 
   const load = useCallback(async () => {
-    const r1 = new Date(annee, mois, 1);
-    const r2 = new Date(annee, mois + 1, 0);
-    const d1 = dateISO(r1);
-    const d2 = dateISO(r2);
-    const [rC, rO, rL, rP] = await Promise.all([
+    const d1 = dateISO(new Date(annee, mois, 1));
+    const d2 = dateISO(new Date(annee, mois + 1, 0));
+    const [rCM, rCT, rO, rL, rP] = await Promise.all([
+      // mois affiché
       supabase
         .from('cotisations')
-        .select('*')
+        .select(COLONNES_COT)
         .eq('paye', true)
         .gte('date_samedi', d1)
         .lte('date_samedi', d2),
-      supabase.from('caisse_operations').select('*').is('event_id', null).order('created_at'),
+      // historique complet : le solde général et le cumul annuel ne peuvent
+      // pas être calculés sur le seul mois affiché.
+      supabase.from('cotisations').select(COLONNES_COT).eq('paye', true),
+      supabase
+        .from('caisse_operations')
+        .select('*')
+        .is('event_id', null)
+        .order('created_at'),
       supabase.from('lecteurs').select('id, matricule'),
       supabase.from('profiles').select('id, full_name'),
     ]);
-    setCotisations((rC.data ?? []) as Cotisation[]);
+    setCotsMois((rCM.data ?? []) as Cotisation[]);
+    setCotsToutes((rCT.data ?? []) as Cotisation[]);
     setOps((rO.data ?? []) as CaisseOperation[]);
     setLecteurs((rL.data ?? []) as Lecteur[]);
     setProfiles((rP.data ?? []) as Profile[]);
@@ -88,32 +106,42 @@ export default function Caisse() {
   const auteurName = (uid: string | null) =>
     profiles.find((p) => p.id === uid)?.full_name ?? '—';
 
-  // ---- totaux globaux (caisse générale)
-  const totalCot = cotisations.reduce((s, c) => s + c.montant, 0);
+  // --------------------------------------------------------------- totaux
+  // Solde général : toutes les cotisations jamais encaissées + encaissements
+  // − décaissements. Le mois affiché n'entre pas dans ce calcul.
+  const totalCotMois = cotsMois.reduce((s, c) => s + c.montant, 0);
+  const totalCotTout = cotsToutes.reduce((s, c) => s + c.montant, 0);
   const enc = ops
     .filter((o) => o.type === 'encaissement')
     .reduce((s, o) => s + o.montant, 0);
   const dec = ops
     .filter((o) => o.type === 'decaissement')
     .reduce((s, o) => s + o.montant, 0);
+  const soldeGeneral = totalCotTout + enc - dec;
 
-  // totaux mensuels / annuels (cotisations + ops)
   const prefixeMois = `${annee}-${String(mois + 1).padStart(2, '0')}`;
+  const prefixeAnnee = String(annee);
+
+  // Récolté ce mois : cotisations du mois + opérations de caisse du mois.
   const opsMois = ops
     .filter((o) => o.created_at.slice(0, 7) === prefixeMois)
     .reduce((s, o) => s + (o.type === 'encaissement' ? o.montant : -o.montant), 0);
-  const prefixeAnnee = String(annee);
+  const recolteMois = totalCotMois + opsMois;
+
+  // Cumul annuel : cotisations dont le samedi tombe dans l'année affichée
+  // (même base que la vue mensuelle) + opérations de caisse de cette année.
+  const cotAnnee = cotsToutes
+    .filter((c) => c.date_samedi.slice(0, 4) === prefixeAnnee)
+    .reduce((s, c) => s + c.montant, 0);
   const opsAnnee = ops
     .filter((o) => o.created_at.slice(0, 4) === prefixeAnnee)
     .reduce((s, o) => s + (o.type === 'encaissement' ? o.montant : -o.montant), 0);
-  const cotAnnee = cotisations
-    .filter((c) => (c.paid_at ?? '').slice(0, 4) === prefixeAnnee)
-    .reduce((s, c) => s + c.montant, 0);
+  const cumulAnnee = cotAnnee + opsAnnee;
 
   const lignes: Ligne[] = useMemo(() => {
     const moisDebut = dateISO(new Date(annee, mois, 1));
     const moisFin = dateISO(new Date(annee, mois + 1, 0, 23, 59));
-    const cots: Ligne[] = cotisations
+    const cots: Ligne[] = cotsMois
       .filter((c) => c.date_samedi >= moisDebut && c.date_samedi <= moisFin)
       .map((c) => ({
         date: c.date_samedi,
@@ -136,15 +164,19 @@ export default function Caisse() {
       }));
     return [...cots, ...opsLignes].sort((a, b) => (a.date < b.date ? 1 : -1));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cotisations, ops, lecteurs, annee, mois]);
+  }, [cotsMois, ops, lecteurs, profiles, annee, mois]);
 
   async function ajouterOp() {
-    if (!isCO) return;
+    if (!isCO) {
+      toast("Seul le Chargé des Opérations peut enregistrer une opération de caisse.", 'err');
+      return;
+    }
     const montant = Number(opForm.montant);
     if (!montant || montant <= 0 || !opForm.motif.trim()) {
       toast('Montant et motif obligatoires.', 'err');
       return;
     }
+    setBusyOp(true);
     const { error } = await supabase.from('caisse_operations').insert({
       event_id: null,
       type: opForm.type,
@@ -152,8 +184,10 @@ export default function Caisse() {
       motif: opForm.motif.trim(),
       recorded_by: profile?.id ?? null,
     });
-    if (error) toast(error.message, 'err');
-    else {
+    setBusyOp(false);
+    if (error) {
+      toast(traduireErreur(error, "enregistrer cette opération de caisse"), 'err');
+    } else {
       setOpForm({ type: 'encaissement', montant: '', motif: '' });
       toast('Opération enregistrée dans la caisse générale.');
       load();
@@ -161,20 +195,19 @@ export default function Caisse() {
   }
 
   async function exportPdf() {
+    setBusyExport(true);
     try {
       await exportCaisse({
         periode: moisLabel(annee, mois),
         lignes,
-        totalPaye: lignes
-          .filter((l) => l.type === 'cotisation')
-          .reduce((s, l) => s + l.montant, 0),
+        totalPaye: totalCotMois,
         totalEnc: lignes
           .filter((l) => l.type === 'encaissement')
           .reduce((s, l) => s + l.montant, 0),
         totalDec: lignes
           .filter((l) => l.type === 'decaissement')
           .reduce((s, l) => s + l.montant, 0),
-        soldeGeneral: totalCot + enc - dec,
+        soldeGeneral,
         auteur: profile?.full_name ?? '—',
       });
       await supabase.rpc('log_action', {
@@ -185,7 +218,9 @@ export default function Caisse() {
       });
       toast('PDF généré.');
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Erreur PDF.', 'err');
+      toast(traduireErreur(err, 'générer le PDF de la caisse'), 'err');
+    } finally {
+      setBusyExport(false);
     }
   }
 
@@ -198,60 +233,48 @@ export default function Caisse() {
         sub="Caisse générale (cotisations + encaissements − décaissements) — séparée des caisses d'événements"
         actions={
           canExport ? (
-            <button
-              onClick={exportPdf}
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-            >
+            <BtnGhost onClick={exportPdf} busy={busyExport} busyLabel="PDF…">
               ⬇ Export PDF
-            </button>
+            </BtnGhost>
           ) : undefined
         }
       />
 
-      <div className="mb-4 flex items-center gap-1">
-        <button
-          onClick={() => {
+      <div className="mb-4 flex justify-start">
+        <StepNav
+          label={moisLabel(annee, mois)}
+          width="min-w-[170px]"
+          onPrev={() => {
             const d = deplaceMois(annee, mois, -1);
             setAnnee(d.annee);
             setMois(d.mois);
           }}
-          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
-        >
-          ←
-        </button>
-        <span className="min-w-[170px] px-2 text-center text-sm font-bold text-slate-700">
-          {moisLabel(annee, mois)}
-        </span>
-        <button
-          onClick={() => {
+          onNext={() => {
             const d = deplaceMois(annee, mois, 1);
             setAnnee(d.annee);
             setMois(d.mois);
           }}
-          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
-        >
-          →
-        </button>
+        />
       </div>
 
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           label="Solde général de la caisse"
-          value={fmtMoney(totalCot + enc - dec)}
+          value={fmtMoney(soldeGeneral)}
           tone="blue"
           sub="depuis l'origine"
         />
         <StatCard
           label="Récolté ce mois"
-          value={fmtMoney(totalCot + opsMois)}
+          value={fmtMoney(recolteMois)}
           tone="green"
           sub={moisLabel(annee, mois)}
         />
         <StatCard
-          label="Annuel (année en cours)"
-          value={fmtMoney(cotAnnee + opsAnnee)}
+          label={`Cumul ${prefixeAnnee}`}
+          value={fmtMoney(cumulAnnee)}
           tone="amber"
-          sub={prefixeAnnee}
+          sub={`dont ${fmtMoney(cotAnnee)} de cotisations`}
         />
         <StatCard
           label="Décaissés (total)"
@@ -262,34 +285,46 @@ export default function Caisse() {
       </div>
 
       {isCO && (
-        <div className="mb-4 flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <select
-            value={opForm.type}
-            onChange={(ev) =>
-              setOpForm({
-                ...opForm,
-                type: ev.target.value as 'encaissement' | 'decaissement',
-              })
-            }
-            className={`${inputCls} w-auto`}
-          >
-            <option value="encaissement">Encaissement</option>
-            <option value="decaissement">Décaissement</option>
-          </select>
-          <input
-            type="number"
-            placeholder="Montant (F)"
-            value={opForm.montant}
-            onChange={(ev) => setOpForm({ ...opForm, montant: ev.target.value })}
-            className={`${inputCls} w-32`}
-          />
-          <input
-            placeholder="Motif"
-            value={opForm.motif}
-            onChange={(ev) => setOpForm({ ...opForm, motif: ev.target.value })}
-            className={`${inputCls} min-w-[180px] flex-1`}
-          />
-          <BtnPrimary onClick={ajouterOp}>Enregistrer</BtnPrimary>
+        <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <select
+              value={opForm.type}
+              aria-label="Type d'opération"
+              onChange={(ev) =>
+                setOpForm({
+                  ...opForm,
+                  type: ev.target.value as 'encaissement' | 'decaissement',
+                })
+              }
+              className={`${inputCls} w-full sm:w-auto`}
+            >
+              <option value="encaissement">Encaissement</option>
+              <option value="decaissement">Décaissement</option>
+            </select>
+            <input
+              type="number"
+              min={1}
+              inputMode="numeric"
+              placeholder="Montant (F)"
+              value={opForm.montant}
+              onChange={(ev) => setOpForm({ ...opForm, montant: ev.target.value })}
+              className={`${inputCls} w-full sm:w-32`}
+            />
+            <input
+              placeholder="Motif"
+              value={opForm.motif}
+              onChange={(ev) => setOpForm({ ...opForm, motif: ev.target.value })}
+              className={`${inputCls} min-w-0 flex-1`}
+            />
+            <BtnPrimary
+              onClick={ajouterOp}
+              busy={busyOp}
+              busyLabel="Enregistrement…"
+              className="w-full sm:w-auto"
+            >
+              Enregistrer
+            </BtnPrimary>
+          </div>
         </div>
       )}
 
@@ -318,7 +353,9 @@ export default function Caisse() {
               <tbody className="divide-y divide-slate-100">
                 {lignes.map((l, i) => (
                   <tr key={i} className="hover:bg-slate-50/60">
-                    <td className="px-4 py-2 text-slate-500">{fmtDate(l.date)}</td>
+                    <td className="whitespace-nowrap px-4 py-2 text-slate-500">
+                      {fmtDate(l.date)}
+                    </td>
                     <td className="px-4 py-2">
                       <Badge
                         tone={
@@ -336,10 +373,10 @@ export default function Caisse() {
                             : 'Décaissement'}
                       </Badge>
                     </td>
-                    <td className="px-4 py-2">{l.libelle}</td>
+                    <td className="px-4 py-2 break-words">{l.libelle}</td>
                     <td className="px-4 py-2 text-slate-500">{l.auteur}</td>
                     <td
-                      className={`px-4 py-2 text-right font-semibold ${
+                      className={`whitespace-nowrap px-4 py-2 text-right font-semibold ${
                         l.type === 'decaissement' ? 'text-alerte' : 'text-emerald-600'
                       }`}
                     >
@@ -352,10 +389,14 @@ export default function Caisse() {
             </table>
           </div>
         )}
-        <div className="flex items-center justify-between border-t border-slate-200 px-4 py-2 text-xs text-slate-400">
-          <span>Dernière opération : {ops.length > 0 ? fmtDateHeure(ops[ops.length - 1].created_at) : '—'}</span>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-2 text-xs text-slate-400">
           <span>
-            Solde général : <strong className="text-slate-600">{fmtMoney(totalCot + enc - dec)}</strong>
+            Dernière opération :{' '}
+            {ops.length > 0 ? fmtDateHeure(ops[ops.length - 1].created_at) : '—'}
+          </span>
+          <span>
+            Solde général :{' '}
+            <strong className="text-slate-600">{fmtMoney(soldeGeneral)}</strong>
           </span>
         </div>
       </div>

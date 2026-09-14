@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { fmtDateHeure } from '../lib/dates';
+import { traduireErreur } from '../lib/errors';
 import type { LogEntry, Profile, Role } from '../lib/types';
 import { ROLE_LABELS } from '../lib/types';
 import {
@@ -11,6 +12,7 @@ import {
   Field,
   inputCls,
   PageHeader,
+  pressCls,
   Spinner,
   useToast,
 } from '../components/ui';
@@ -27,6 +29,8 @@ export default function Admin() {
   const [montantCot, setMontantCot] = useState('50');
   const [loading, setLoading] = useState(true);
   const [qLog, setQLog] = useState('');
+  const [busyRole, setBusyRole] = useState<string | null>(null);
+  const [busyMontant, setBusyMontant] = useState(false);
 
   const load = useCallback(async () => {
     const [rL, rP, rS] = await Promise.all([
@@ -55,11 +59,13 @@ export default function Admin() {
     }
     if (!confirm(`Changer le rôle de ${c.full_name ?? c.id} en ${ROLE_LABELS[role]} ?`))
       return;
+    setBusyRole(c.id);
     const { error } = await supabase
       .from('profiles')
       .update({ role })
       .eq('id', c.id);
-    if (error) toast(error.message, 'err');
+    setBusyRole(null);
+    if (error) toast(traduireErreur(error, 'modifier le rôle de ce compte'), 'err');
     else {
       toast('Rôle mis à jour.');
       load();
@@ -77,8 +83,10 @@ export default function Admin() {
       )
     )
       return;
+    setBusyRole(c.id);
     const { error } = await supabase.from('profiles').delete().eq('id', c.id);
-    if (error) toast(error.message, 'err');
+    setBusyRole(null);
+    if (error) toast(traduireErreur(error, 'désactiver ce compte'), 'err');
     else {
       toast('Compte désactivé (accès retiré).');
       load();
@@ -91,11 +99,13 @@ export default function Admin() {
       toast('Montant invalide.', 'err');
       return;
     }
+    setBusyMontant(true);
     const { error } = await supabase
       .from('app_settings')
       .update({ value: String(v) })
       .eq('key', 'montant_cotisation');
-    if (error) toast(error.message, 'err');
+    setBusyMontant(false);
+    if (error) toast(traduireErreur(error, 'modifier le montant de la cotisation'), 'err');
     else {
       toast(`Montant de la cotisation : ${v} F (modifié — tracé dans les logs).`);
       load();
@@ -128,7 +138,8 @@ export default function Admin() {
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`rounded-md px-4 py-1.5 text-sm font-semibold ${
+            aria-pressed={tab === t}
+            className={`rounded-md px-4 py-1.5 text-sm font-semibold ${pressCls} ${
               tab === t ? 'bg-cdlj text-white' : 'text-slate-600'
             }`}
           >
@@ -263,7 +274,9 @@ export default function Admin() {
                       {c.id !== profile?.id && (
                         <>
                           <select
-                            className="mr-2 rounded border border-slate-200 bg-white px-1 py-1 text-xs"
+                            disabled={busyRole === c.id}
+                            aria-label={`Rôle de ${c.full_name ?? c.id}`}
+                            className={`mr-2 rounded border border-slate-200 bg-white px-1 py-1 text-xs ${pressCls}`}
                             value={c.role ?? ''}
                             onChange={(e) =>
                               changerRole(c, e.target.value as Role)
@@ -278,9 +291,10 @@ export default function Admin() {
                           </select>
                           <button
                             onClick={() => supprimerCompte(c)}
-                            className="text-alerte hover:underline"
+                            disabled={busyRole === c.id}
+                            className={`text-alerte hover:underline ${pressCls}`}
                           >
-                            Désactiver
+                            {busyRole === c.id ? 'En cours…' : 'Désactiver'}
                           </button>
                         </>
                       )}
@@ -318,7 +332,13 @@ export default function Admin() {
             enregistrées conservent leur montant. Action tracée dans les logs.
           </p>
           <div className="mt-4">
-            <BtnPrimary onClick={saveMontant}>Enregistrer</BtnPrimary>
+            <BtnPrimary
+              onClick={saveMontant}
+              busy={busyMontant}
+              busyLabel="Enregistrement…"
+            >
+              Enregistrer
+            </BtnPrimary>
           </div>
         </div>
       )}

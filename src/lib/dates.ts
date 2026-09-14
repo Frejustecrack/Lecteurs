@@ -84,3 +84,65 @@ export function pct(part: number, total: number): number {
   if (total <= 0) return 0;
   return Math.round((part / total) * 100);
 }
+
+// ---------------------------------------------------------------------------
+// Semaines — utilisées par le module « Suivis » (vue hebdomadaire).
+// Une semaine va du lundi au dimanche ; le groupe se réunissant le samedi,
+// une semaine contient au plus un samedi de séance.
+// ---------------------------------------------------------------------------
+
+/** Lundi de la semaine contenant `d` (à minuit). */
+export function lundiDeSemaine(d: Date): Date {
+  const r = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dow = r.getDay(); // 0 = dimanche … 6 = samedi
+  const delta = dow === 0 ? -6 : 1 - dow;
+  r.setDate(r.getDate() + delta);
+  return r;
+}
+
+/** Dimanche de la semaine contenant `d` (à minuit). */
+export function dimancheDeSemaine(d: Date): Date {
+  const l = lundiDeSemaine(d);
+  l.setDate(l.getDate() + 6);
+  return l;
+}
+
+/** Les samedis contenus dans la semaine de `d` (0 ou 1 samedi). */
+export function samedisSemaine(d: Date): Date[] {
+  const res: Date[] = [];
+  const cur = lundiDeSemaine(d);
+  for (let i = 0; i < 7; i++) {
+    if (cur.getDay() === 6) res.push(new Date(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return res;
+}
+
+/** Semaine précédente ou suivante (delta = -1 / +1). */
+export function deplaceSemaine(d: Date, delta: number): Date {
+  const r = lundiDeSemaine(d);
+  r.setDate(r.getDate() + 7 * delta);
+  return r;
+}
+
+/** Numéro ISO de la semaine. */
+export function numeroSemaine(d: Date): number {
+  const t = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  t.setDate(t.getDate() + 4 - (t.getDay() || 7));
+  const debutAn = new Date(t.getFullYear(), 0, 1);
+  return Math.ceil(((t.getTime() - debutAn.getTime()) / 86400000 + 1) / 7);
+}
+
+/** « Semaine 37 — 08/09 au 14/09/2026 ». */
+export function semaineLabel(d: Date): string {
+  const l = lundiDeSemaine(d);
+  const dim = dimancheDeSemaine(d);
+  const f = (x: Date) =>
+    `${String(x.getDate()).padStart(2, '0')}/${String(x.getMonth() + 1).padStart(2, '0')}`;
+  return `Semaine ${numeroSemaine(d)} — ${f(l)} au ${f(dim)}/${dim.getFullYear()}`;
+}
+
+/** Vrai si la semaine contient aujourd'hui. */
+export function estSemaineCourante(d: Date): boolean {
+  return dateISO(lundiDeSemaine(d)) === dateISO(lundiDeSemaine(new Date()));
+}

@@ -30,12 +30,21 @@ import {
   BtnPrimary,
   EmptyState,
   Field,
+  iconPressCls,
   inputCls,
   Modal,
   PageHeader,
+  pressCls,
   Spinner,
   useToast,
 } from '../components/ui';
+import { traduireErreur } from '../lib/errors';
+import {
+  anneeCourante,
+  bornesAnneeAdhesion,
+  bornesAnneeNaissance,
+  validerAnneesLecteur,
+} from '../lib/validation';
 import { exportFicheLecteur } from '../pdf/export';
 
 function MonthNav({
@@ -54,7 +63,7 @@ function MonthNav({
           const d = deplaceMois(annee, mois, -1);
           onChange(d.annee, d.mois);
         }}
-        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-sm hover:bg-slate-50"
+        className={`border-slate-200 px-2.5 py-1 text-sm hover:bg-slate-50 ${iconPressCls}`}
         aria-label="Mois précédent"
       >
         ←
@@ -67,7 +76,7 @@ function MonthNav({
           const d = deplaceMois(annee, mois, 1);
           onChange(d.annee, d.mois);
         }}
-        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-sm hover:bg-slate-50"
+        className={`border-slate-200 px-2.5 py-1 text-sm hover:bg-slate-50 ${iconPressCls}`}
         aria-label="Mois suivant"
       >
         →
@@ -114,6 +123,11 @@ export default function LecteurProfil() {
   const [fraternites, setFraternites] = useState<{ id: string; nom: string }[]>([]);
 
   const [nouveauxGrade, setNouveauxGrade] = useState(1);
+  const [busyGrade, setBusyGrade] = useState(false);
+  const [busyEdit, setBusyEdit] = useState(false);
+  const [busyArchive, setBusyArchive] = useState(false);
+  const [busyAppreciation, setBusyAppreciation] = useState(false);
+  const [busyPdf, setBusyPdf] = useState(false);
   const [appriseForm, setAppriseForm] = useState<{
     nature: NatureAppreciation;
     motif: string;
@@ -220,11 +234,13 @@ export default function LecteurProfil() {
 
   async function changerGrade() {
     if (!l) return;
+    setBusyGrade(true);
     const { error } = await supabase.rpc('changer_grade', {
       p_lecteur: l.id,
       p_grade: nouveauxGrade,
     });
-    if (error) toast(error.message, 'err');
+    setBusyGrade(false);
+    if (error) toast(traduireErreur(error, 'changer le grade de ce lecteur'), 'err');
     else {
       toast(`Grade mis à jour : ${gradeNom(nouveauxGrade)}`);
       load();
@@ -239,21 +255,29 @@ export default function LecteurProfil() {
       )
     )
       return;
-    await supabase
+    setBusyArchive(true);
+    const { error } = await supabase
       .from('lecteurs')
       .update({ archived: true, archived_at: new Date().toISOString() })
       .eq('id', l.id);
+    setBusyArchive(false);
+    if (error) {
+      toast(traduireErreur(error, 'archiver ce lecteur'), 'err');
+      return;
+    }
     toast('Lecteur archivé.');
     navigate('/lecteurs');
   }
 
   async function restaurer() {
     if (!l) return;
+    setBusyArchive(true);
     const { error } = await supabase
       .from('lecteurs')
       .update({ archived: false, archived_at: null })
       .eq('id', l.id);
-    if (error) toast(error.message, 'err');
+    setBusyArchive(false);
+    if (error) toast(traduireErreur(error, 'restaurer ce lecteur'), 'err');
     else {
       toast('Lecteur restauré.');
       load();
@@ -276,6 +300,16 @@ export default function LecteurProfil() {
 
   async function saveEdit() {
     if (!l) return;
+    if (!form.nom.trim() || !form.prenom.trim()) {
+      toast('Nom et prénom sont obligatoires.', 'err');
+      return;
+    }
+    const v = validerAnneesLecteur(form.date_naissance, form.annee_adhesion);
+    if (!v.ok) {
+      toast(v.message ?? 'Saisie invalide.', 'err');
+      return;
+    }
+    setBusyEdit(true);
     const { error } = await supabase.from('lecteurs').update({
       nom: form.nom.trim(),
       prenom: form.prenom.trim(),
@@ -285,7 +319,8 @@ export default function LecteurProfil() {
       adresse: form.adresse.trim() || null,
       contact_parent: form.contact_parent.trim() || null,
     });
-    if (error) toast(error.message, 'err');
+    setBusyEdit(false);
+    if (error) toast(traduireErreur(error, 'mettre à jour cette fiche'), 'err');
     else {
       setShowEdit(false);
       toast('Fiche mise à jour.');
@@ -298,12 +333,16 @@ export default function LecteurProfil() {
       toast('Le motif est obligatoire.', 'err');
       return;
     }
+    setBusyAppreciation(true);
     const { error } = await supabase.from('appreciations').insert({
       lecteur_id: l.id,
       nature: appriseForm.nature,
       motif: appriseForm.motif.trim(),
+      // Auteur de l'appréciation : exigé par le cahier des charges §15.
+      created_by: profile?.id ?? null,
     });
-    if (error) toast(error.message, 'err');
+    setBusyAppreciation(false);
+    if (error) toast(traduireErreur(error, 'enregistrer cette appréciation'), 'err');
     else {
       setAppriseForm({ nature: 'positive', motif: '' });
       toast('Appréciation enregistrée.');
@@ -318,7 +357,7 @@ export default function LecteurProfil() {
       .from('appreciations')
       .update({ deleted: true, deleted_at: new Date().toISOString() })
       .eq('id', a.id);
-    if (error) toast(error.message, 'err');
+    if (error) toast(traduireErreur(error, 'retirer cette appréciation'), 'err');
     else {
       toast('Appréciation retirée du profil (historique conservé).');
       load();
@@ -327,6 +366,7 @@ export default function LecteurProfil() {
 
   async function exportPdf() {
     if (!l) return;
+    setBusyPdf(true);
     try {
       await exportFicheLecteur({
         lecteur: l,
@@ -347,7 +387,9 @@ export default function LecteurProfil() {
       });
       toast('PDF généré.');
     } catch (e) {
-      toast(e instanceof Error ? e.message : 'Erreur lors de la génération du PDF.', 'err');
+      toast(traduireErreur(e, 'générer la fiche PDF de ce lecteur'), 'err');
+    } finally {
+      setBusyPdf(false);
     }
   }
 
@@ -363,13 +405,23 @@ export default function LecteurProfil() {
         actions={
           <>
             {canEdit && <BtnGhost onClick={openEdit}>Modifier</BtnGhost>}
-            {(canEdit || profile?.role === 'caissier') && (
-              <BtnGhost onClick={exportPdf}>⬇ PDF</BtnGhost>
+            {canEdit && (
+              <BtnGhost onClick={exportPdf} busy={busyPdf} busyLabel="PDF…">
+                ⬇ PDF
+              </BtnGhost>
             )}
             {l.archived ? (
-              isAdmin && <BtnPrimary onClick={restaurer}>Restaurer</BtnPrimary>
+              isAdmin && (
+                <BtnPrimary onClick={restaurer} busy={busyArchive} busyLabel="Restauration…">
+                  Restaurer
+                </BtnPrimary>
+              )
             ) : (
-              canEdit && <BtnDanger onClick={archiver}>Archiver</BtnDanger>
+              canEdit && (
+                <BtnDanger onClick={archiver} busy={busyArchive} busyLabel="Archivage…">
+                  Archiver
+                </BtnDanger>
+              )
             )}
           </>
         }
@@ -436,6 +488,8 @@ export default function LecteurProfil() {
                 <BtnPrimary
                   onClick={changerGrade}
                   disabled={nouveauxGrade === l.grade_id}
+                  busy={busyGrade}
+                  busyLabel="Changement…"
                 >
                   Changer
                 </BtnPrimary>
@@ -514,24 +568,28 @@ export default function LecteurProfil() {
             <h4 className="mb-2 mt-4 text-xs font-semibold uppercase text-slate-400">
               Récapitulatif 12 derniers mois
             </h4>
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-left text-slate-400">
-                  <th className="py-1">Mois</th>
-                  <th className="py-1 text-right">Présents</th>
-                  <th className="py-1 text-right">Absents</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {recapAnnuel.map((r) => (
-                  <tr key={r.label}>
-                    <td className="py-1 font-medium text-slate-600">{r.label}</td>
-                    <td className="py-1 text-right text-emerald-600">{r.present}</td>
-                    <td className="py-1 text-right text-alerte">{r.absent}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[240px] text-xs">
+                <thead>
+                  <tr className="text-left text-slate-400">
+                    <th className="py-1">Mois</th>
+                    <th className="py-1 text-right">Présents</th>
+                    <th className="py-1 text-right">Absents</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {recapAnnuel.map((r) => (
+                    <tr key={r.label}>
+                      <td className="whitespace-nowrap py-1 font-medium text-slate-600">
+                        {r.label}
+                      </td>
+                      <td className="py-1 text-right text-emerald-600">{r.present}</td>
+                      <td className="py-1 text-right text-alerte">{r.absent}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -600,7 +658,12 @@ export default function LecteurProfil() {
               value={appriseForm.motif}
               onChange={(e) => setAppriseForm({ ...appriseForm, motif: e.target.value })}
             />
-            <BtnPrimary onClick={addAppreciation} className="w-full">
+            <BtnPrimary
+              onClick={addAppreciation}
+              className="w-full"
+              busy={busyAppreciation}
+              busyLabel="Enregistrement…"
+            >
               Ajouter
             </BtnPrimary>
           </div>
@@ -634,7 +697,7 @@ export default function LecteurProfil() {
                     {canEdit && (
                       <button
                         onClick={() => deleteAppreciation(a)}
-                        className="text-xs font-semibold text-slate-400 hover:text-alerte"
+                        className={`text-xs font-semibold text-slate-400 hover:text-alerte ${pressCls}`}
                       >
                         Supprimer
                       </button>
@@ -662,10 +725,28 @@ export default function LecteurProfil() {
               <input className={inputCls} value={form.prenom} onChange={(e) => setForm({ ...form, prenom: e.target.value })} />
             </Field>
             <Field label="Date de naissance">
-              <input type="date" className={inputCls} value={form.date_naissance} onChange={(e) => setForm({ ...form, date_naissance: e.target.value })} />
+              <input
+                type="date"
+                className={inputCls}
+                value={form.date_naissance}
+                min={bornesAnneeNaissance().min}
+                max={bornesAnneeNaissance().max}
+                onChange={(e) => setForm({ ...form, date_naissance: e.target.value })}
+              />
             </Field>
-            <Field label="Année d'adhésion">
-              <input type="number" className={inputCls} value={form.annee_adhesion} onChange={(e) => setForm({ ...form, annee_adhesion: e.target.value })} />
+            <Field
+              label="Année d'adhésion"
+              hint={`De ${bornesAnneeAdhesion().min} à ${anneeCourante()} (année en cours au maximum)`}
+            >
+              <input
+                type="number"
+                className={inputCls}
+                value={form.annee_adhesion}
+                inputMode="numeric"
+                min={bornesAnneeAdhesion().min}
+                max={bornesAnneeAdhesion().max}
+                onChange={(e) => setForm({ ...form, annee_adhesion: e.target.value })}
+              />
             </Field>
             <Field label="Fraternité">
               <select className={inputCls} value={form.fraternite_id} onChange={(e) => setForm({ ...form, fraternite_id: e.target.value })}>
@@ -684,7 +765,9 @@ export default function LecteurProfil() {
           </Field>
           <div className="flex justify-end gap-2 pt-2">
             <BtnGhost onClick={() => setShowEdit(false)}>Annuler</BtnGhost>
-            <BtnPrimary onClick={saveEdit}>Enregistrer</BtnPrimary>
+            <BtnPrimary onClick={saveEdit} busy={busyEdit} busyLabel="Enregistrement…">
+              Enregistrer
+            </BtnPrimary>
           </div>
         </div>
       </Modal>

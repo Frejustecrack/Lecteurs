@@ -3,19 +3,22 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { ROLE_LABELS, type Role } from '../lib/types';
+import { traduireErreur } from '../lib/errors';
 import {
   BtnPrimary,
   Field,
   inputCls,
   Modal,
+  pressCls,
   useToast,
 } from './ui';
 
 const NAV: { to: string; label: string; icon: string; roles?: Role[] }[] = [
   { to: '/', label: 'Accueil', icon: '🏠' },
   { to: '/lecteurs', label: 'Lecteurs', icon: '👥' },
-  { to: '/fraternites', label: 'Fraternités', icon: '️' },
+  { to: '/fraternites', label: 'Fraternités', icon: '🤝' },
   { to: '/presences', label: 'Présences', icon: '📅' },
+  { to: '/suivis', label: 'Suivis', icon: '📊' },
   { to: '/cotisations', label: 'Cotisations', icon: '💰' },
   { to: '/evenements', label: 'Événements', icon: '🎉' },
   { to: '/caisse', label: 'Caisse', icon: '🏦' },
@@ -57,6 +60,18 @@ export default function Layout() {
   );
 
   async function logout() {
+    // Le log doit être écrit AVANT la fermeture de session : après, le jeton
+    // n'existe plus et l'auteur de la déconnexion serait perdu.
+    if (user) {
+      await supabase.rpc('log_action', {
+        p_action: 'compte.deconnexion',
+        p_objet_type: 'profiles',
+        p_objet_ref: user.id,
+        p_detail: JSON.stringify({
+          identifiant: profile?.username ?? user.email ?? user.phone ?? null,
+        }),
+      });
+    }
     await supabase.auth.signOut();
     navigate('/login');
   }
@@ -74,7 +89,7 @@ export default function Layout() {
     const { error } = await supabase.auth.updateUser({ password: pwForm.p1 });
     setPwBusy(false);
     if (error) {
-      toast(error.message, 'err');
+      toast(traduireErreur(error, 'modifier votre mot de passe'), 'err');
     } else {
       setPwOpen(false);
       setPwForm({ p1: '', p2: '' });
@@ -93,13 +108,13 @@ export default function Layout() {
       <div className="flex gap-2">
         <button
           onClick={() => setPwOpen(true)}
-          className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          className={`flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 ${pressCls}`}
         >
           Mot de passe
         </button>
         <button
           onClick={logout}
-          className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          className={`flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 ${pressCls}`}
         >
           Déconnexion
         </button>
@@ -116,7 +131,7 @@ export default function Layout() {
           end={n.to === '/'}
           onClick={() => setOpen(false)}
           className={({ isActive }) =>
-            `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+            `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium ${pressCls} ${
               isActive
                 ? 'bg-cdlj text-white shadow-sm'
                 : 'text-slate-600 hover:bg-slate-100'
@@ -144,7 +159,7 @@ export default function Layout() {
         <header className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur lg:hidden">
           <button
             onClick={() => setOpen(true)}
-            className="rounded-lg p-2 text-slate-600 hover:bg-slate-100"
+            className={`rounded-lg p-2 text-slate-600 hover:bg-slate-100 ${pressCls}`}
             aria-label="Ouvrir le menu"
           >
             <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -154,7 +169,7 @@ export default function Layout() {
           <div className="text-sm font-extrabold text-cdlj">CDLJ Akogbato</div>
           <button
             onClick={logout}
-            className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"
+            className={`rounded-lg p-2 text-slate-400 hover:bg-slate-100 ${pressCls}`}
             aria-label="Se déconnecter"
           >
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -207,8 +222,8 @@ export default function Layout() {
             Votre identifiant ({displayUser}) reste fixe et ne change pas.
           </p>
           <div className="flex justify-end gap-2">
-            <BtnPrimary onClick={changePassword} disabled={pwBusy}>
-              {pwBusy ? 'Enregistrement…' : 'Enregistrer'}
+            <BtnPrimary onClick={changePassword} busy={pwBusy} busyLabel="Enregistrement…">
+              Enregistrer
             </BtnPrimary>
           </div>
         </div>

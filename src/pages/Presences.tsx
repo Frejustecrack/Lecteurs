@@ -11,12 +11,16 @@ import {
   moisLabel,
   samedisDuMois,
 } from '../lib/dates';
+import { traduireErreur } from '../lib/errors';
 import type { Fraternite, Lecteur, Presence } from '../lib/types';
 import {
+  BtnGhost,
   EmptyState,
   inputCls,
   PageHeader,
+  pressCls,
   Spinner,
+  StepNav,
   useToast,
 } from '../components/ui';
 import { exportPresences } from '../pdf/export';
@@ -36,6 +40,8 @@ export default function Presences() {
   const [fraternites, setFraternites] = useState<Fraternite[]>([]);
   const [presences, setPresences] = useState<Presence[]>([]);
   const [loading, setLoading] = useState(true);
+  const [busyPdf, setBusyPdf] = useState(false);
+  const [celluleActive, setCelluleActive] = useState<string | null>(null);
 
   const samedis = useMemo(
     () => samedisDuMois(annee, mois).map(dateISO),
@@ -98,6 +104,7 @@ export default function Presences() {
       return;
     }
     const next = current?.statut === 'present' ? 'absent' : 'present';
+    setCelluleActive(`${l.id}|${sam}`);
     const { error } = await supabase
       .from('presences')
       .upsert(
@@ -109,11 +116,12 @@ export default function Presences() {
         },
         { onConflict: 'lecteur_id,date_samedi' }
       );
+    setCelluleActive(null);
     if (error) {
       toast(
         gelee
-          ? 'Correction refusée par la sécurité de la base. Vérifiez votre rôle.'
-          : error.message,
+          ? "Vous n'êtes pas autorisé à modifier un samedi déjà passé. Cette correction est réservée à l'Administrateur."
+          : traduireErreur(error, 'enregistrer cette présence'),
         'err'
       );
       return;
@@ -150,37 +158,28 @@ export default function Presences() {
         title="Présences"
         sub="Enregistrement des samedis — un samedi passé est gelé automatiquement"
         actions={
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => {
-                  const d = deplaceMois(annee, mois, -1);
-                  setAnnee(d.annee);
-                  setMois(d.mois);
-                }}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
-              >
-                ←
-              </button>
-              <span className="min-w-[150px] px-1 text-center text-sm font-bold text-slate-700">
-                {moisLabel(annee, mois)}
-              </span>
-              <button
-                onClick={() => {
-                  const d = deplaceMois(annee, mois, 1);
-                  setAnnee(d.annee);
-                  setMois(d.mois);
-                }}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
-              >
-                →
-              </button>
-            </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <StepNav
+              label={moisLabel(annee, mois)}
+              onPrev={() => {
+                const d = deplaceMois(annee, mois, -1);
+                setAnnee(d.annee);
+                setMois(d.mois);
+              }}
+              onNext={() => {
+                const d = deplaceMois(annee, mois, 1);
+                setAnnee(d.annee);
+                setMois(d.mois);
+              }}
+            />
             {(profile?.role === 'admin' ||
               profile?.role === 'co' ||
               profile?.role === 'caissier') && (
-              <button
+              <BtnGhost
+                busy={busyPdf}
+                busyLabel="PDF…"
                 onClick={async () => {
+                  setBusyPdf(true);
                   try {
                     exportPresences({
                       annee,
@@ -201,13 +200,14 @@ export default function Presences() {
                     });
                     toast('PDF généré.');
                   } catch (err) {
-                    toast(err instanceof Error ? err.message : 'Erreur PDF.', 'err');
+                    toast(traduireErreur(err, 'générer le PDF des présences'), 'err');
+                  } finally {
+                    setBusyPdf(false);
                   }
                 }}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
                 ⬇ PDF
-              </button>
+              </BtnGhost>
             )}
           </div>
         }
@@ -332,7 +332,8 @@ export default function Presences() {
                                 ? 'Cliquez pour basculer présent/absent'
                                 : 'Samedi gelé — correction Admin uniquement'
                             }
-                            className={`h-8 w-10 rounded-md text-sm font-bold transition-colors ${
+                            aria-busy={celluleActive === `${l.id}|${s}` || undefined}
+                            className={`h-8 w-10 rounded-md text-sm font-bold transition-all duration-150 active:scale-90 ${
                               p?.statut === 'present'
                                 ? 'bg-emerald-500 text-white'
                                 : p?.statut === 'absent'
