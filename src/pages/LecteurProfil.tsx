@@ -123,6 +123,10 @@ export default function LecteurProfil() {
   });
   const [fraternites, setFraternites] = useState<{ id: string; nom: string }[]>([]);
 
+  /** Fraternité en cours de sélection (carte visible à tous les rôles). */
+  const [fratSel, setFratSel] = useState('');
+  const [busyFrat, setBusyFrat] = useState(false);
+
   const [nouveauxGrade, setNouveauxGrade] = useState(1);
   const [busyGrade, setBusyGrade] = useState(false);
   const [busyEdit, setBusyEdit] = useState(false);
@@ -194,6 +198,9 @@ export default function LecteurProfil() {
       .channel(`realtime-profil-${id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'presences', filter: `lecteur_id=eq.${id}` }, () => load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'cotisations', filter: `lecteur_id=eq.${id}` }, () => load())
+      // La fiche elle-même : un changement de fraternité fait ailleurs
+      // (mobile, autre poste) se répercute ici sans rechargement manuel.
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'lecteurs', filter: `id=eq.${id}` }, () => load())
       .subscribe();
     const onFocus = () => load();
     const onVis = () => { if (document.visibilityState === 'visible') load(); };
@@ -205,6 +212,12 @@ export default function LecteurProfil() {
       supabase.removeChannel(channel);
     };
   }, [id, load]);
+
+  // Le select de fraternité suit la fiche chargée (y compris après un
+  // rafraîchissement temps réel déclenché par une modification externe).
+  useEffect(() => {
+    setFratSel(l?.fraternite_id ?? '');
+  }, [l?.fraternite_id]);
 
   const gradeNom = (gid: number) => grades.find((g) => g.id === gid)?.nom ?? '—';
   const auteurName = (uid: string | null) =>
@@ -348,6 +361,61 @@ export default function LecteurProfil() {
     }
   }
 
+  /**
+   * Changement de fraternité — autorisé à TOUS les rôles (cahier des charges :
+   * information de vie de groupe, pas une donnée administrative).
+   *
+   * Voie principale : la fonction SECURITY DEFINER `changer_fraternite`
+   * (migration 20260914150600) qui valide la cible et journalise l'action.
+   * Repli : si la fonction n'est pas encore appliquée sur la base, on tente
+   * l'UPDATE direct de la seule colonne `fraternite_id` — autorisé par la
+   * policy `lecteurs_update_fraternite` et filtré par le trigger
+   * `check_lecteur_update`, qui interdit à un rôle non Admin/CO de toucher à
+   * toute autre colonne.
+   */
+  async function changerFraternite() {
+    if (!l || !id) return;
+    const cible = fratSel || null;
+    setBusyFrat(true);
+
+    const { error } = await supabase.rpc('changer_fraternite', {
+      p_lecteur: id,
+      p_fraternite: cible,
+    });
+
+    // 42883 = undefined_function, PGRST202 = fonction absente du schéma PostgREST
+    const fonctionAbsente =
+      !!error && (error.code === '42883' || error.code === 'PGRST202');
+
+    if (error && !fonctionAbsente) {
+      setBusyFrat(false);
+      toast(traduireErreur(error, 'changer la fraternité'), 'err');
+      return;
+    }
+
+    if (fonctionAbsente) {
+      const { error: errDirect } = await supabase
+        .from('lecteurs')
+        .update({ fraternite_id: cible, updated_at: new Date().toISOString() })
+        .eq('id', id);
+      if (errDirect) {
+        setBusyFrat(false);
+        toast(traduireErreur(errDirect, 'changer la fraternité'), 'err');
+        return;
+      }
+    }
+
+    setBusyFrat(false);
+    toast(
+      cible
+        ? `Fraternité enregistrée : ${
+            fraternites.find((f) => f.id === cible)?.nom ?? ''
+          }.`
+        : 'Lecteur détaché de sa fraternité.'
+    );
+    load();
+  }
+
   async function addAppreciation() {
     if (!l || !appriseForm.motif.trim()) {
       toast('Le motif est obligatoire.', 'err');
@@ -487,6 +555,51 @@ export default function LecteurProfil() {
                 <dd className="font-medium">{fmtDate(l.created_at)}</dd>
               </div>
             </dl>
+          </div>
+
+          {/* ---------------------------------------------------------- Fraternité
+              Carte volontairement VISIBLE PAR TOUS LES RÔLES : le rattachement
+              à une fraternité se corrige sur le terrain (Caissier, Responsable),
+              pas seulement depuis l'Admin. */}
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h3 className="mb-1 text-sm font-bold text-slate-700">Fraternité</h3>
+            <p className="mb-3 text-xs text-slate-400">
+              Rattachement actuel :{' '}
+              <span className="font-semibold text-slate-600">
+                {fraternites.find((f) => f.id === l.fraternite_id)?.nom ?? 'aucune'}
+              </span>
+            </p>
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <select
+                  aria-label="Fraternité du lecteur"
+                  className={inputCls}
+                  value={fratSel}
+                  disabled={l.archived}
+                  onChange={(e) => setFratSel(e.target.value)}
+                >
+                  <option value="">— Aucune fraternité —</option>
+                  {fraternites.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.nom}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <BtnPrimary
+                onClick={changerFraternite}
+                busy={busyFrat}
+                busyLabel="…"
+                disabled={l.archived || fratSel === (l.fraternite_id ?? '')}
+              >
+                Changer
+              </BtnPrimary>
+            </div>
+            {l.archived && (
+              <p className="mt-2 text-xs font-medium text-amber-600">
+                Lecteur archivé — rattachement verrouillé.
+              </p>
+            )}
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

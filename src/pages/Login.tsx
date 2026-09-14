@@ -3,7 +3,7 @@ import { Navigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { traduireErreur } from '../lib/errors';
-import { BtnPrimary, Field, inputCls } from '../components/ui';
+import { BtnPrimary, EyeToggle, Field, inputCls, pwInputCls } from '../components/ui';
 
 // Domaines internes réservés aux identifiants CDLJ (jamais utilisé pour l'envoi
 // d'emails : les comptes sont créés directement par l'administrateur).
@@ -27,6 +27,8 @@ export default function Login() {
   const { user, profile, loading } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  /** Œil : révèle temporairement le mot de passe saisi. */
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -111,15 +113,18 @@ export default function Login() {
               />
             </Field>
             <Field label="Mot de passe">
-              <input
-                type="password"
-                required
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className={inputCls}
-                placeholder="••••••••"
-              />
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className={pwInputCls}
+                  placeholder="••••••••"
+                />
+                <EyeToggle shown={showPassword} onToggle={() => setShowPassword((v) => !v)} />
+              </div>
             </Field>
             {error && (
               <div className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-alerte">

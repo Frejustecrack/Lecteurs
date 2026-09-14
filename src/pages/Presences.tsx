@@ -574,18 +574,39 @@ export default function Presences() {
         </div>
       )}
 
-      <p className="mt-3 text-xs text-slate-400">
-        ✓ Présent · ✗ Absent · — Samedi à venir (non comptabilisé). Par défaut un
-        samedi arrivé est <strong className="text-alerte">rouge</strong> : tant que
-        la présence n'a pas été basculée au vert, le lecteur est considéré comme
-        absent. Un samedi passé est gelé — correction exceptionnelle de
-        l'Administrateur uniquement, tracée dans les logs. Le récapitulatif par
-        lecteur et les listes de présents/absents se consultent dans l'onglet{' '}
-        <Link to="/suivis" className="font-semibold text-cdlj hover:underline">
-          Suivis
-        </Link>
-        .
-      </p>
+      {/* ------------------------------------------------------------------
+          Légende — puces reprenant exactement les couleurs des cellules du
+          tableau (vert = présent, rouge = absent, gris pointillé = à venir). */}
+      <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex h-7 items-center gap-1.5 rounded-md bg-emerald-500 px-2.5 text-sm font-bold text-white">
+            <span aria-hidden>✓</span>
+            <span className="text-xs font-semibold">Présent (vert)</span>
+          </span>
+          <span aria-hidden className="text-slate-300">·</span>
+          <span className="inline-flex h-7 items-center gap-1.5 rounded-md bg-alerte px-2.5 text-sm font-bold text-white">
+            <span aria-hidden>✗</span>
+            <span className="text-xs font-semibold">Absent (rouge)</span>
+          </span>
+          <span aria-hidden className="text-slate-300">·</span>
+          <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-dashed border-slate-300 px-2.5 text-sm font-bold text-slate-400">
+            <span aria-hidden>—</span>
+            <span className="text-xs font-semibold">à venir (gris)</span>
+          </span>
+        </div>
+        <p className="mt-2 text-xs leading-relaxed text-slate-400">
+          Par défaut un samedi arrivé est <strong className="text-alerte">rouge</strong> :
+          tant que la présence n'a pas été basculée au vert, le lecteur est
+          considéré comme absent. Un samedi passé est gelé — correction
+          exceptionnelle de l'Administrateur uniquement, tracée dans les logs. Le
+          récapitulatif par lecteur et les listes de présents/absents se
+          consultent dans l'onglet{' '}
+          <Link to="/suivis" className="font-semibold text-cdlj hover:underline">
+            Suivis
+          </Link>
+          .
+        </p>
+      </div>
     </div>
   );
 }
