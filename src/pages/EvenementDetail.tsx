@@ -13,6 +13,7 @@ import type {
 import {
   Badge,
   BtnDanger,
+  BtnDangerGhost,
   BtnGhost,
   BtnPrimary,
   EmptyState,
@@ -138,13 +139,48 @@ export default function EvenementDetail() {
       .filter((r) => (filtre ? r.statut === filtre : true));
   }, [lecteurs, parLecteur, e, filtre]);
 
+  // ---- Récapitulatif financier de l'événement ------------------------------
+  // Mêmes définitions que la caisse générale (cotisations + encaissements
+  // − décaissements), appliquées à la caisse propre de cet événement.
+
+  /** Participations réellement versées par les lecteurs (tranches encaissées). */
   const totalCollecte = paiements.reduce((s, p) => s + p.montant, 0);
+
+  /** Ce que l'ensemble des participants devrait verser au total. */
   const totalAttendu = lecteurs.length * (e?.montant_participation ?? 0);
-  const restantGlobal = Math.max(totalAttendu - totalCollecte, 0);
-  const soldeCaisse = ops.reduce(
-    (s, o) => s + (o.type === 'encaissement' ? o.montant : -o.montant),
+
+  /**
+   * Reste à percevoir : somme des restants dus, calculée participant par
+   * participant pour qu'un éventuel trop-versé ne masque pas un impayé.
+   */
+  const restantGlobal = lecteurs.reduce(
+    (s, l) =>
+      s +
+      Math.max(
+        (e?.montant_participation ?? 0) - (parLecteur.get(l.id)?.paye ?? 0),
+        0
+      ),
     0
   );
+
+  /** Entrées de caisse de l'événement (hors participations des lecteurs). */
+  const totalEncaisse = ops
+    .filter((o) => o.type === 'encaissement')
+    .reduce((s, o) => s + o.montant, 0);
+
+  /** Sorties de caisse de l'événement. */
+  const totalDecaisse = ops
+    .filter((o) => o.type === 'decaissement')
+    .reduce((s, o) => s + o.montant, 0);
+
+  const nbEncaissements = ops.filter((o) => o.type === 'encaissement').length;
+  const nbDecaissements = ops.length - nbEncaissements;
+
+  /** Caisse de l'événement : collecté + encaissements − décaissements. */
+  const soldeCaisse = totalCollecte + totalEncaisse - totalDecaisse;
+
+  /** Pourcentage de participations déjà versées. */
+  const avancement = pct(totalCollecte, totalAttendu);
 
   if (loading || !e) return <Spinner label="Chargement de l'événement…" />;
 
@@ -161,12 +197,12 @@ export default function EvenementDetail() {
       .maybeSingle();
     if (!l) {
       setBusyInscription(false);
-      toast(`Matricule ${q} introuvable dans la base.`, 'err');
+      toast(`Le matricule ${q} est introuvable.`, 'err');
       return;
     }
     if ((l as Lecteur).archived) {
       setBusyInscription(false);
-      toast('Ce lecteur est archivé.', 'err');
+      toast('Ce lecteur est archivé : il ne peut pas être inscrit.', 'err');
       return;
     }
     const { data: deja } = await supabase
@@ -207,7 +243,7 @@ export default function EvenementDetail() {
       .eq('lecteur_id', l.id);
     if (error) toast(traduireErreur(error, 'retirer ce participant'), 'err');
     else {
-      toast('Participant retiré.');
+      toast('Le participant a été retiré.');
       load();
     }
   }
@@ -229,7 +265,7 @@ export default function EvenementDetail() {
     const paye = parLecteur.get(trancheOuverte)?.paye ?? 0;
     const restant = (e?.montant_participation ?? 0) - paye;
     if (montant > restant) {
-      toast(`Montant supérieur au restant (${fmtMoney(restant)}).`, 'err');
+      toast(`Ce montant dépasse le restant dû (${fmtMoney(restant)}).`, 'err');
       return;
     }
     setBusyTranche(true);
@@ -257,7 +293,7 @@ export default function EvenementDetail() {
       )
     )
       return;
-    if (!confirm('Confirmation finale : terminer l’événement définitivement ?')) return;
+    if (!confirm("Confirmation finale : terminer définitivement l'événement ?")) return;
     setBusyStatut(true);
     const { error } = await supabase
       .from('evenements')
@@ -266,7 +302,7 @@ export default function EvenementDetail() {
     setBusyStatut(false);
     if (error) toast(traduireErreur(error, 'clôturer cet événement'), 'err');
     else {
-      toast('Événement terminé — en lecture seule.');
+      toast('L\'événement est terminé : il passe en lecture seule.');
       load();
     }
   }
@@ -288,7 +324,7 @@ export default function EvenementDetail() {
         p_objet_ref: e.id,
         p_detail: JSON.stringify({ nom: e.nom }),
       });
-      toast('Événement réouvert.');
+      toast('L\'événement a été réouvert.');
       load();
     }
   }
@@ -298,7 +334,7 @@ export default function EvenementDetail() {
       toast("Seul le Chargé des Opérations ou l'Administrateur peut supprimer un événement.", 'err');
       return;
     }
-    if (!confirm(`Supprimer définitivement l'événement « ${e.nom} » ?\n\nParticipants, paiements et caisse liée seront supprimés (cascade). Cette action est irréversible.`)) return;
+    if (!confirm(`Supprimer définitivement l'événement « ${e.nom} » ?\n\nLes participants, les paiements et la caisse liée seront supprimés en cascade. Cette action est irréversible.`)) return;
     if (!confirm('Confirmation finale : supprimer ?')) return;
     setBusyDelete(true);
     const { error } = await supabase.from('evenements').delete().eq('id', e.id);
@@ -313,7 +349,7 @@ export default function EvenementDetail() {
       p_objet_ref: e.id,
       p_detail: JSON.stringify({ nom: e.nom }),
     });
-    toast('Événement supprimé.');
+    toast('L\'événement a été supprimé.');
     navigate('/evenements');
   }
 
@@ -328,7 +364,7 @@ export default function EvenementDetail() {
     if (!enCours) return;
     const montant = Number(opForm.montant);
     if (!montant || montant <= 0 || !opForm.motif.trim()) {
-      toast('Montant et motif obligatoires.', 'err');
+      toast('Le montant et le motif sont obligatoires.', 'err');
       return;
     }
     setBusyOp(true);
@@ -343,7 +379,7 @@ export default function EvenementDetail() {
     if (error) toast(traduireErreur(error, 'enregistrer cette opération de caisse'), 'err');
     else {
       setOpForm({ type: 'encaissement', montant: '', motif: '' });
-      toast('Opération enregistrée.');
+      toast('L\'opération a été enregistrée.');
       load();
     }
   }
@@ -360,7 +396,7 @@ export default function EvenementDetail() {
 
   async function saveEdit() {
     if (!formEdit.nom.trim() || !formEdit.date_evenement) {
-      toast('Nom et date sont obligatoires.', 'err');
+      toast('Le nom et la date sont obligatoires.', 'err');
       return;
     }
     setBusyEdit(true);
@@ -374,7 +410,7 @@ export default function EvenementDetail() {
     if (error) toast(traduireErreur(error, 'modifier cet événement'), 'err');
     else {
       setShowEdit(false);
-      toast('Événement mis à jour.');
+      toast('L\'événement a été mis à jour.');
       load();
     }
   }
@@ -392,6 +428,10 @@ export default function EvenementDetail() {
         })),
         totalCollecte,
         totalAttendu,
+        restantAPercevoir: restantGlobal,
+        encaissements: totalEncaisse,
+        decaissements: totalDecaisse,
+        soldeCaisse,
         auteur: profile?.full_name ?? '—',
       });
       await supabase.rpc('log_action', {
@@ -400,7 +440,7 @@ export default function EvenementDetail() {
         p_objet_ref: e.id,
         p_detail: JSON.stringify({ document: 'bilan_evenement', nom: e.nom }),
       });
-      toast('PDF généré.');
+      toast('Le bilan PDF a été généré.');
     } catch (err) {
       toast(traduireErreur(err, 'générer le bilan PDF de cet événement'), 'err');
     } finally {
@@ -429,26 +469,30 @@ export default function EvenementDetail() {
             )}
             {(isAdmin || isCO) && (
               <BtnGhost onClick={exportPdf} busy={busyPdf} busyLabel="PDF…">
-                ⬇ PDF bilan
+                Bilan PDF
               </BtnGhost>
             )}
             {enCours ? (
               isCO && (
                 <BtnDanger onClick={terminer} busy={busyStatut} busyLabel="Clôture…">
-                  Terminer l'événement
+                  Terminer
                 </BtnDanger>
               )
             ) : (
               isAdmin && (
                 <BtnGhost onClick={reouvrir} busy={busyStatut} busyLabel="Réouverture…">
-                  Réouvrir (Admin)
+                  Réouvrir
                 </BtnGhost>
               )
             )}
             {(isCO || isAdmin) && (
-              <BtnDanger onClick={supprimerEvenement} busy={busyDelete} busyLabel="Suppression…">
+              <BtnDangerGhost
+                onClick={supprimerEvenement}
+                busy={busyDelete}
+                busyLabel="Suppression…"
+              >
                 Supprimer
-              </BtnDanger>
+              </BtnDangerGhost>
             )}
           </>
         }
@@ -460,33 +504,66 @@ export default function EvenementDetail() {
         </div>
       )}
 
-      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Collecté" value={fmtMoney(totalCollecte)} tone="green" sub="sur l'événement" />
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <StatCard
-          label="Restant à percevoir"
+          label="Collecté"
+          value={fmtMoney(totalCollecte)}
+          tone="green"
+          sub="participations versées"
+        />
+        <StatCard
+          label="Restant"
           value={fmtMoney(restantGlobal)}
           tone={restantGlobal > 0 ? 'red' : 'green'}
+          sub="à percevoir"
         />
         <StatCard
-          label="Avancement"
-          value={pct(totalCollecte, totalAttendu) + ' %'}
+          label="Encaissements"
+          value={fmtMoney(totalEncaisse)}
           tone="blue"
-          sub={`${lecteurs.length} participant(s)`}
+          sub={`${nbEncaissements} opération${nbEncaissements > 1 ? 's' : ''}`}
         />
         <StatCard
-          label="Caisse de l'événement"
-          value={fmtMoney(soldeCaisse)}
-          tone="amber"
-          sub="encaissements − décaissements"
+          label="Décaissements"
+          value={fmtMoney(totalDecaisse)}
+          tone="red"
+          sub={`${nbDecaissements} opération${nbDecaissements > 1 ? 's' : ''}`}
         />
+        {/* Carte de synthèse : pleine largeur sur téléphone, 1/5 sur ordinateur. */}
+        <div className="col-span-2 sm:col-span-1">
+          <StatCard
+            label="Caisse événement"
+            value={fmtMoney(soldeCaisse)}
+            tone="amber"
+            sub="collecté + encaissé − décaissé"
+          />
+        </div>
       </div>
 
-      {/* Barre de progression */}
-      <div className="mb-4 h-3 overflow-hidden rounded-full bg-slate-200">
+      {/* Avancement des participations */}
+      <div className="mb-4">
+        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-xs font-medium text-slate-500">
+          <span>Avancement des participations</span>
+          <span>
+            <strong className="font-bold text-slate-700">{avancement} %</strong>
+            {' · '}
+            {lecteurs.length} participant{lecteurs.length > 1 ? 's' : ''}
+            {' · '}attendu {fmtMoney(totalAttendu)}
+          </span>
+        </div>
         <div
-          className="h-full rounded-full bg-emerald-500 transition-all"
-          style={{ width: `${pct(totalCollecte, totalAttendu)}%` }}
-        />
+          role="progressbar"
+          aria-label="Avancement des participations"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={avancement}
+          className="h-3 overflow-hidden rounded-full bg-slate-200"
+        >
+          <div
+            className="h-full rounded-full bg-emerald-500 transition-all duration-300"
+            style={{ width: `${avancement}%` }}
+          />
+        </div>
       </div>
 
       {/* Inscription */}
@@ -520,8 +597,9 @@ export default function EvenementDetail() {
       <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-bold text-slate-700">
-            Participants ({rows.length}
-            {filtre ? ` filtrés` : ''})
+            {filtre
+              ? `Participants filtrés (${rows.length})`
+              : `Participants (${rows.length})`}
           </h3>
           <select
             value={filtre}
@@ -535,7 +613,7 @@ export default function EvenementDetail() {
           </select>
         </div>
         {rows.length === 0 ? (
-          <EmptyState msg="Aucun participant (pour ce filtre)." />
+          <EmptyState msg="Aucun participant ne correspond à ce filtre." />
         ) : (
           <>
             {/* ---- Mobile : cartes empilées (aucun débordement horizontal) ---- */}
@@ -730,7 +808,7 @@ export default function EvenementDetail() {
           Caisse de l'événement (séparée de la caisse générale)
         </h3>
         {isCO && enCours && (
-          <div className="mb-4 flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row">
+          <div className="mb-4 flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:flex-wrap">
             <select
               value={opForm.type}
               aria-label="Type d'opération"
@@ -746,6 +824,8 @@ export default function EvenementDetail() {
               type="number"
               min={1}
               inputMode="numeric"
+              enterKeyHint="next"
+              aria-label="Montant de l'opération en francs CFA"
               placeholder="Montant (F)"
               value={opForm.montant}
               onChange={(ev) => setOpForm({ ...opForm, montant: ev.target.value })}
@@ -753,9 +833,12 @@ export default function EvenementDetail() {
             />
             <input
               placeholder="Motif"
+              enterKeyHint="done"
+              aria-label="Motif de l'opération"
               value={opForm.motif}
               onChange={(ev) => setOpForm({ ...opForm, motif: ev.target.value })}
-              className={`${inputCls} min-w-0 flex-1`}
+              onKeyDown={(ev) => ev.key === 'Enter' && ajouterOp()}
+              className={`${inputCls} min-w-0 flex-1 sm:min-w-[160px]`}
             />
             <BtnPrimary
               onClick={ajouterOp}
@@ -769,7 +852,7 @@ export default function EvenementDetail() {
         )}
         {ops.length === 0 ? (
           <p className="text-sm text-slate-400">
-            Aucune opération d'encaissement/décaissement sur cet événement.
+            Aucune opération d'encaissement ou de décaissement sur cet événement.
           </p>
         ) : (
           <>
@@ -863,16 +946,31 @@ export default function EvenementDetail() {
           <Field label="Montant de la tranche (F CFA)">
             <input
               type="number"
+              min={1}
+              inputMode="numeric"
+              enterKeyHint="done"
+              aria-label="Montant de la tranche en francs CFA"
               className={inputCls}
               value={montantTranche}
               onChange={(ev) => setMontantTranche(ev.target.value)}
               placeholder="Ex. 5000"
+              onKeyDown={(ev) => ev.key === 'Enter' && ajouterTranche()}
             />
           </Field>
-          <div className="flex justify-end gap-2">
-            <BtnGhost onClick={() => setTrancheOuverte(null)}>Annuler</BtnGhost>
-            <BtnPrimary onClick={ajouterTranche} busy={busyTranche} busyLabel="Enregistrement…">
-              Enregistrer la tranche
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <BtnGhost
+              onClick={() => setTrancheOuverte(null)}
+              className="w-full sm:w-auto"
+            >
+              Annuler
+            </BtnGhost>
+            <BtnPrimary
+              onClick={ajouterTranche}
+              busy={busyTranche}
+              busyLabel="Enregistrement…"
+              className="w-full sm:w-auto"
+            >
+              Enregistrer
             </BtnPrimary>
           </div>
         </div>
@@ -911,9 +1009,13 @@ export default function EvenementDetail() {
               />
             </Field>
           </div>
-          <Field label="Montant de participation">
+          <Field label="Montant de participation (F CFA)">
             <input
               type="number"
+              min={0}
+              inputMode="numeric"
+              enterKeyHint="done"
+              aria-label="Montant de participation en francs CFA"
               className={inputCls}
               value={formEdit.montant_participation}
               onChange={(ev) =>
@@ -921,9 +1023,16 @@ export default function EvenementDetail() {
               }
             />
           </Field>
-          <div className="flex justify-end gap-2">
-            <BtnGhost onClick={() => setShowEdit(false)}>Annuler</BtnGhost>
-            <BtnPrimary onClick={saveEdit} busy={busyEdit} busyLabel="Enregistrement…">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <BtnGhost onClick={() => setShowEdit(false)} className="w-full sm:w-auto">
+              Annuler
+            </BtnGhost>
+            <BtnPrimary
+              onClick={saveEdit}
+              busy={busyEdit}
+              busyLabel="Enregistrement…"
+              className="w-full sm:w-auto"
+            >
               Enregistrer
             </BtnPrimary>
           </div>

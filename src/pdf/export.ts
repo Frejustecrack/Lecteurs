@@ -314,9 +314,23 @@ export function exportEvenementBilan(args: {
   participants: { lecteur: Lecteur; paye: number; tranches: EvenementPaiement[] }[];
   totalCollecte: number;
   totalAttendu: number;
+  /** Reste à percevoir auprès des participants (facultatif : recalculé sinon). */
+  restantAPercevoir?: number;
+  /** Encaissements de la caisse de l'événement (hors participations). */
+  encaissements?: number;
+  /** Décaissements de la caisse de l'événement. */
+  decaissements?: number;
+  /** Caisse de l'événement : collecté + encaissements − décaissements. */
+  soldeCaisse?: number;
   auteur: string;
 }) {
   const { evenement: e, participants, totalCollecte, totalAttendu, auteur } = args;
+  const restantAPercevoir =
+    args.restantAPercevoir ?? Math.max(totalAttendu - totalCollecte, 0);
+  const encaissements = args.encaissements ?? 0;
+  const decaissements = args.decaissements ?? 0;
+  const soldeCaisse =
+    args.soldeCaisse ?? totalCollecte + encaissements - decaissements;
   const doc = new jsPDF();
   const y = entete(
     doc,
@@ -359,15 +373,32 @@ export function exportEvenementBilan(args: {
 
   table(doc, { startY: y + 5, head, body });
   const finY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
+  const largeur = doc.internal.pageSize.getWidth();
+
+  // Récapitulatif financier — mêmes intitulés que l'écran de l'événement.
   doc.setFontSize(9.5);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(15, 23, 42);
-  doc.text(
-    `Total collecté : ${fmtMoney(totalCollecte)}   •   Total restant : ${fmtMoney(Math.max(totalAttendu - totalCollecte, 0))}   •   Attendu : ${fmtMoney(totalAttendu)}`,
-    doc.internal.pageSize.getWidth() / 2,
-    finY,
-    { align: 'center' }
-  );
+  doc.text(`Total collecté : ${fmtMoney(totalCollecte)}`, 14, finY);
+  doc.text(`Restant à percevoir : ${fmtMoney(restantAPercevoir)}`, 14, finY + 5);
+  doc.text(`Total attendu : ${fmtMoney(totalAttendu)}`, 14, finY + 10);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(51, 65, 85);
+  doc.text(`Encaissements : ${fmtMoney(encaissements)}`, largeur - 14, finY, {
+    align: 'right',
+  });
+  doc.text(`Décaissements : ${fmtMoney(decaissements)}`, largeur - 14, finY + 5, {
+    align: 'right',
+  });
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.setTextColor(BLEU_CDLJ[0], BLEU_CDLJ[1], BLEU_CDLJ[2]);
+  doc.text(`Caisse de l'événement : ${fmtMoney(soldeCaisse)}`, largeur - 14, finY + 12, {
+    align: 'right',
+  });
+
   piedPage(doc);
   sauvegarderPdf(doc, `cdlj_evenement_${e.date_evenement}.pdf`);
 }

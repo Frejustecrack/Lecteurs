@@ -40,6 +40,8 @@ export default function Evenements() {
     montant_participation: '',
   });
   const [busy, setBusy] = useState(false);
+  /** Identifiant de l'événement en cours de suppression (bouton désactivé). */
+  const [busyDelete, setBusyDelete] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [rE, rP] = await Promise.all([
@@ -127,6 +129,34 @@ export default function Evenements() {
     }
   }
 
+  /** Suppression depuis la liste : même contrôle et même message qu'en fiche. */
+  async function supprimer(e: Evenement) {
+    if (!canManage) {
+      toast(
+        "Seul le Chargé des Opérations ou l'Administrateur peut supprimer un événement.",
+        'err'
+      );
+      return;
+    }
+    if (
+      !confirm(
+        `Supprimer l'événement « ${e.nom} » ?\n\nLes participants, les paiements et la caisse liée seront supprimés en cascade. Cette action est irréversible.`
+      )
+    )
+      return;
+    if (!confirm("Confirmation finale : supprimer définitivement l'événement ?")) return;
+    setBusyDelete(e.id);
+    const { error } = await supabase.from('evenements').delete().eq('id', e.id);
+    setBusyDelete(null);
+    if (error) {
+      // Jamais de message PostgreSQL brut à l'écran (voir lib/errors.ts).
+      toast(traduireErreur(error, 'supprimer cet événement'), 'err');
+      return;
+    }
+    toast("L'événement a été supprimé.");
+    load();
+  }
+
   if (loading) return <Spinner label="Chargement des événements…" />;
 
   const list = evenements.filter((e) => e.statut === tab);
@@ -172,56 +202,66 @@ export default function Evenements() {
         />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {list.map((e) => (
-            <button
-              key={e.id}
-              onClick={() => navigate(`/evenements/${e.id}`)}
-              className="rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-shadow hover:shadow-md"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <h3 className="font-bold text-slate-800">{e.nom}</h3>
-                <Badge tone={e.statut === 'en_cours' ? 'green' : 'gray'}>
-                  {e.statut === 'en_cours' ? 'En cours' : 'Terminé'}
-                </Badge>
+          {list.map((e) => {
+            const nb = nbParticipants[e.id] ?? 0;
+            return (
+              /* Un <button> ne peut pas en contenir un autre : la carte est
+                 donc un conteneur cliquable, ce qui garde l'accessibilité
+                 clavier sans invalider le HTML. */
+              <div
+                key={e.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => navigate(`/evenements/${e.id}`)}
+                onKeyDown={(ev) => {
+                  if (ev.key === 'Enter' || ev.key === ' ') {
+                    ev.preventDefault();
+                    navigate(`/evenements/${e.id}`);
+                  }
+                }}
+                className="cursor-pointer rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cdlj/45"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="min-w-0 break-words font-bold text-slate-800">{e.nom}</h3>
+                  <Badge tone={e.statut === 'en_cours' ? 'green' : 'gray'}>
+                    {e.statut === 'en_cours' ? 'En cours' : 'Terminé'}
+                  </Badge>
+                </div>
+                <div className="mt-2 space-y-1 text-sm text-slate-600">
+                  <div>📅 {fmtDate(e.date_evenement)}</div>
+                  {e.lieu && <div className="break-words">📍 {e.lieu}</div>}
+                  <div>💰 Participation : {fmtMoney(e.montant_participation)}</div>
+                  <div>
+                    👥 {nb} participant{nb > 1 ? 's' : ''}
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-cdlj">
+                    {e.statut === 'en_cours' && canManage ? 'Voir le détail →' : 'Voir →'}
+                  </span>
+                  {canManage && (
+                    <button
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        supprimer(e);
+                      }}
+                      disabled={busyDelete === e.id}
+                      className="shrink-0 text-xs font-semibold text-alerte hover:underline disabled:pointer-events-none disabled:opacity-50"
+                    >
+                      {busyDelete === e.id ? 'Suppression…' : 'Supprimer'}
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="mt-2 space-y-1 text-sm text-slate-600">
-                <div>📅 {fmtDate(e.date_evenement)}</div>
-                {e.lieu && <div>📍 {e.lieu}</div>}
-                <div>💰 Participation : {fmtMoney(e.montant_participation)}</div>
-                <div>👥 {nbParticipants[e.id] ?? 0} participant(s)</div>
-              </div>
-              <div className="mt-3 flex items-center justify-between">
-                {e.statut === 'en_cours' && canManage ? (
-                  <span className="text-xs font-semibold text-cdlj">Modifier →</span>
-                ) : (
-                  <span />
-                )}
-                {canManage && (
-                  <button
-                    onClick={(ev) => {
-                      ev.stopPropagation();
-                      if (!confirm(`Supprimer l'événement « ${e.nom} » ?`)) return;
-                      if (!confirm('Confirmation : supprimer définitivement ?')) return;
-                      supabase.from('evenements').delete().eq('id', e.id).then(({ error }) => {
-                        if (error) alert(error.message);
-                        else load();
-                      });
-                    }}
-                    className="text-xs font-semibold text-alerte hover:underline"
-                  >
-                    Supprimer
-                  </button>
-                )}
-              </div>
-            </button>
-          ))}
+            );
+          })}
         </div>
       )}
 
       <Modal
         open={formOpen}
         onClose={() => setFormOpen(false)}
-        title={editId ? 'Modifier l’événement' : 'Nouvel événement'}
+        title={editId ? "Modifier l'événement" : 'Nouvel événement'}
       >
         <div className="space-y-4">
           <Field label="Nom *">
@@ -251,10 +291,14 @@ export default function Evenements() {
           </div>
           <Field
             label="Montant de participation (F CFA)"
-            hint="Fixé à la création, les participants paient en une ou plusieurs tranches."
+            hint="Fixé à la création ; les participants paient en une ou plusieurs tranches."
           >
             <input
               type="number"
+              min={0}
+              inputMode="numeric"
+              enterKeyHint="done"
+              aria-label="Montant de participation en francs CFA"
               className={inputCls}
               value={form.montant_participation}
               onChange={(e) =>
@@ -262,9 +306,16 @@ export default function Evenements() {
               }
             />
           </Field>
-          <div className="flex justify-end gap-2 pt-2">
-            <BtnGhost onClick={() => setFormOpen(false)}>Annuler</BtnGhost>
-            <BtnPrimary onClick={save} busy={busy} busyLabel="Enregistrement…">
+          <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+            <BtnGhost onClick={() => setFormOpen(false)} className="w-full sm:w-auto">
+              Annuler
+            </BtnGhost>
+            <BtnPrimary
+              onClick={save}
+              busy={busy}
+              busyLabel="Enregistrement…"
+              className="w-full sm:w-auto"
+            >
               Enregistrer
             </BtnPrimary>
           </div>

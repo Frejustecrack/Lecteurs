@@ -106,12 +106,14 @@ export function StatCard({
   };
   return (
     <div
-      className={`group rounded-2xl border border-slate-200/70 border-l-4 bg-white p-4 shadow-sm backdrop-blur-sm transition-all duration-200 hover:shadow-md hover:-translate-y-[1px] hover:border-slate-300 ${border[tone]}`}
+      className={`group h-full min-w-0 rounded-2xl border border-slate-200/70 border-l-4 bg-white p-4 shadow-sm backdrop-blur-sm transition-all duration-200 hover:shadow-md hover:-translate-y-[1px] hover:border-slate-300 ${border[tone]}`}
     >
       <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
         {label}
       </div>
-      <div className="mt-1 text-2xl font-bold tracking-tight text-slate-800">{value}</div>
+      <div className="mt-1 break-words text-xl font-bold tracking-tight text-slate-800 sm:text-2xl">
+        {value}
+      </div>
       {sub && <div className="mt-0.5 text-xs leading-relaxed text-slate-500">{sub}</div>}
     </div>
   );
@@ -143,7 +145,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`cdlj-modal relative z-10 max-h-[92vh] w-full overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl ring-1 ring-slate-200 sm:rounded-2xl ${
+        className={`cdlj-modal relative z-10 max-h-[92vh] w-full overflow-y-auto rounded-t-2xl bg-white p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-2xl ring-1 ring-slate-200 sm:rounded-2xl sm:pb-5 ${
           wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'
         }`}
       >
@@ -190,8 +192,14 @@ export function Field({
   );
 }
 
+/**
+ * Classe de base des champs de saisie.
+ * `text-base sm:text-sm` : 16 px sur téléphone, car iOS zoome automatiquement
+ * dans la page dès qu'un champ fait moins de 16 px au moment de la prise de
+ * focus — ce qui décale toute l'interface sous le clavier.
+ */
 export const inputCls =
-  'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm placeholder:text-slate-400 focus:border-cdlj focus:outline-none focus:ring-2 focus:ring-cdlj/20 focus:shadow-md transition-all';
+  'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base sm:text-sm shadow-sm placeholder:text-slate-400 focus:border-cdlj focus:outline-none focus:ring-2 focus:ring-cdlj/20 focus:shadow-md transition-all';
 
 /**
  * Classes de « retour au clic » partagées par tous les boutons de l'application :
@@ -304,6 +312,32 @@ export function BtnDanger({
   );
 }
 
+/**
+ * Action destructive secondaire (suppression) : même gravité que `BtnDanger`
+ * mais en contour, pour que l'action définitive ressorte et qu'un clic par
+ * inadvertance soit moins probable.
+ */
+export function BtnDangerGhost({
+  children,
+  busy,
+  busyLabel,
+  disabled,
+  ...props
+}: BtnProps) {
+  return (
+    <button
+      {...props}
+      disabled={disabled || busy}
+      aria-busy={busy || undefined}
+      className={`rounded-xl border border-alerte/40 bg-white px-4 py-2 text-sm font-semibold text-alerte shadow-sm hover:border-alerte hover:bg-red-50 active:bg-red-100 ${pressCls} ${props.className ?? ''}`}
+    >
+      <Contenu busy={busy} busyLabel={busyLabel} tone="dark">
+        {children}
+      </Contenu>
+    </button>
+  );
+}
+
 // ---------------------------------------------------------------- Divers
 export function EmptyState({ msg }: { msg: string }) {
   return (
@@ -330,7 +364,9 @@ export function PageHeader({
         <h1 className="text-xl font-extrabold tracking-tight text-slate-800 sm:text-2xl">{title}</h1>
         {sub && <p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-500">{sub}</p>}
       </div>
-      {actions && <div className="flex flex-wrap items-center gap-2 shrink-0">{actions}</div>}
+      {/* `cdlj-actions` : grille 2 colonnes pleine largeur sur téléphone,
+          ligne alignée à droite dès la tablette (voir index.css). */}
+      {actions && <div className="cdlj-actions">{actions}</div>}
     </div>
   );
 }

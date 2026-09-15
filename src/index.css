@@ -17,6 +17,9 @@ body,
 html {
   scroll-behavior: smooth;
   scrollbar-gutter: stable;
+  /* iOS : interdit le regrossissement automatique du texte en paysage. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -54,6 +57,51 @@ body {
    cellule de défilement (overflow-x-auto) qui absorbe le dépassement. */
 table {
   max-width: 100%;
+}
+
+/* ---------------------------------------------------------------------------
+   Barre d'actions des en-têtes de page (PageHeader)
+   Téléphone : grille de 2 colonnes — les boutons ont tous la même largeur,
+   rien ne déborde et la page ne se décale jamais.
+   Tablette / ordinateur : simple ligne fluide, alignée à droite du titre.
+   --------------------------------------------------------------------------- */
+.cdlj-actions {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+/* Un bouton seul prend toute la largeur : pas de trou dans la grille. */
+.cdlj-actions > :only-child {
+  grid-column: 1 / -1;
+}
+
+@media (min-width: 640px) {
+  .cdlj-actions {
+    display: flex;
+    width: auto;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    /* Reste à droite même lorsque la barre passe à la ligne sous le titre. */
+    margin-left: auto;
+  }
+  .cdlj-actions > :only-child {
+    grid-column: auto;
+  }
+}
+
+/* Zone de contenu : réserve la barre de gestes iOS (encoche / bas d'écran). */
+@supports (padding: max(0px)) {
+  .cdlj-main {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+}
+@media (min-width: 640px) {
+  .cdlj-main {
+    padding-bottom: 1.5rem;
+  }
 }
 
 /* Mobile / iOS : défilement horizontal fluide des tableaux, sans entraîner
