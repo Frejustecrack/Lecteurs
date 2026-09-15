@@ -56,6 +56,13 @@ table {
   max-width: 100%;
 }
 
+/* Mobile / iOS : défilement horizontal fluide des tableaux, sans entraîner
+   le défilement de la page. */
+.overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
 /* Cartes et surfaces : transition douce */
 .rounded-xl {
   transition: box-shadow 180ms ease, transform 180ms ease, border-color 180ms ease;
