@@ -177,7 +177,7 @@ Recommandé : **Authentication → Settings** → désactiver *Enable email sign
 
 **Règle “à preuve du contraire” :** un samedi **arrivé** non pointé = **rouge** = absence (ou cotisation due). Un samedi **à venir** = neutre = non comptabilisé. Les samedis à venir n'entrent dans aucun total (KPIs, graphiques, Suivis).
 
-Cinq PDFs côté client (`src/pdf/export.ts` + `jspdf`/`jspdf-autotable`) : présences, cotisations, bilan événement, état de caisse, fiche lecteur. Chaque export est `log_action('export.pdf')`.
+Six exports PDF côté client (`src/pdf/export.ts` + `jspdf`/`jspdf-autotable`) : présences, cotisations, bilan événement, état de caisse, fiche lecteur, liste des lecteurs. Tous les documents partagent **l'en-tête officiel CDLJ** (reproduction conforme de `Document 1.pdf` avec logo CDLJ, image Sainte Famille, mention vicariale/archidiocèse, bandeau doré `#ffd966` et pied de page officiel). L'en-tête et les tableaux s'adaptent dynamiquement à l'orientation (portrait / paysage) et au terminal (téléphone mobile / tablette / ordinateur). Chaque export est tracé via `log_action('export.pdf')`.
 
 ## 7. Règles métier structurantes
 
@@ -213,7 +213,9 @@ src/
 │  ├─ ErrorBoundary.tsx
 │  └─ ui.tsx             Btn*, Badge, StatCard, Modal, Field, Segmented, EyeToggle, StepNav…
 ├─ pages/                10 pages, une par module
-└─ pdf/export.ts         jsPDF + autoTable
+└─ pdf/
+   ├─ export.ts          jsPDF + autoTable (6 exports, adaptatifs portrait/paysage)
+   └─ headerAssets.ts    logos officiels base64 (CDLJ + Sainte Famille)
 
 supabase/
 ├─ migrations/           *.sql versionnés, appliqués auto par Supabase
