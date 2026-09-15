@@ -24,8 +24,8 @@ insert into public.grades (id, nom) values
   (2, 'Noviciat'),
   (3, 'Lectorat I'),
   (4, 'Lectorat II'),
-  (5, 'Animation Grand I'),
-  (6, 'Animation Grand II'),
+  (5, 'Animation I'),
+  (6, 'Animation II'),
   (7, 'Formation')
 on conflict (id) do nothing;
 

@@ -20,50 +20,173 @@ import type {
   LecteurGrade,
   Presence,
 } from '../lib/types';
+import { LOGO_CDLJ_BASE64, SAINTE_FAMILLE_BASE64 } from './headerAssets';
 
-const BLEU: [number, number, number] = [26, 86, 219];
+const BLEU_CDLJ: [number, number, number] = [26, 86, 219];
+const JAUNE_OFFICIEL: [number, number, number] = [255, 217, 102]; // #ffd966 tiré de Document 1.pdf
 
+const LIGNES_OFFICIELLES = [
+  'ARCHIDIOCESE DE COTONOU',
+  '----------------',
+  'ŒUVRE PONTIFICALE DE L’ENFANCE MISSIONNAIRE',
+  '----------------',
+  'COMMUNAUTE DIOCESAINE DES LECTEURS JUNIORS',
+  '----------------',
+  'VICARIAT FORAIN BON PASTEUR',
+  '----------------',
+  'PAROISSE SAINTE FAMILLE D’AKOGBATO',
+  '----------------',
+  'Tel : 01 69 71 42 42/  01 55 17 46 11/ 01 52 70 61 59',
+];
+
+/**
+ * En-tête officiel CDLJ, commun à tous les documents de la plateforme
+ * (reproduction fidèle du document officiel de référence : Document 1.pdf).
+ *
+ * S'adapte dynamiquement :
+ * - À l'orientation de la page (portrait 210mm ou paysage 297mm)
+ * - Aux terminaux (téléphone portable / iOS / Android / ordinateur)
+ *   en embarquant les logos en base64 (aucun appel réseau nécessaire).
+ */
 function entete(
   doc: jsPDF,
   titre: string,
-  periode: string,
+  sousTitre: string,
   utilisateur: string
 ): number {
-  doc.setFillColor(BLEU[0], BLEU[1], BLEU[2]);
-  doc.rect(0, 0, 210, 24, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(15);
-  doc.text("CDLJ — Paroisse Sainte Famille d'Akogbato", 12, 10);
-  doc.setFont('helvetica', 'italic');
-  doc.setFontSize(9);
-  doc.text('« Lecteurs, sel et lumière nous sommes »', 12, 16);
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const isLandscape = pageWidth > 250;
+
+  // Dimensions et positions adaptatives des deux logos officiels
+  const logoW = isLandscape ? 28 : 25;
+  const logoH = logoW * (260 / 260); // Ratio 1:1 pour le logo CDLJ
+  const logoX = isLandscape ? 14 : 10;
+  const logoY = isLandscape ? 6 : 7;
+
+  const stfaW = isLandscape ? 20 : 18;
+  const stfaH = stfaW * (350 / 257); // Ratio 1.36 pour l'image Sainte Famille
+  const stfaX = pageWidth - (isLandscape ? 14 : 10) - stfaW;
+  const stfaY = isLandscape ? 5 : 6;
+
+  // 1. Logos officiels (gauche : CDLJ, droite : Sainte Famille)
+  try {
+    doc.addImage(LOGO_CDLJ_BASE64, 'JPEG', logoX, logoY, logoW, logoH);
+    doc.addImage(SAINTE_FAMILLE_BASE64, 'JPEG', stfaX, stfaY, stfaW, stfaH);
+  } catch (err) {
+    console.warn('Affichage des logos dans le PDF :', err);
+  }
+
+  // 2. Textes officiels centrés (typographie Times Bold comme Document 1.pdf)
+  const cx = pageWidth / 2;
+  doc.setTextColor(0, 0, 0);
+  doc.setFont('times', 'bold');
+  const fontSize = isLandscape ? 7.8 : 7.2;
+  doc.setFontSize(fontSize);
+
+  const startY = isLandscape ? 8 : 8;
+  const lineSpacing = isLandscape ? 3.0 : 2.9;
+
+  for (let i = 0; i < LIGNES_OFFICIELLES.length; i++) {
+    doc.text(LIGNES_OFFICIELLES[i], cx, startY + i * lineSpacing, {
+      align: 'center',
+    });
+  }
+
+  // 3. Bandeau doré officiel (#ffd966, épaisseur 1.3 mm)
+  const goldY = startY + (LIGNES_OFFICIELLES.length - 1) * lineSpacing + 4;
+  doc.setFillColor(JAUNE_OFFICIEL[0], JAUNE_OFFICIEL[1], JAUNE_OFFICIEL[2]);
+  doc.rect(0, goldY, pageWidth, 1.3, 'F');
+
+  // 4. Titre du document spécifique (en majuscules, gras, souligné)
+  let cursorY = goldY + 6;
+  doc.setFont('times', 'bold');
+  doc.setFontSize(isLandscape ? 12 : 11.5);
+  doc.setTextColor(15, 23, 42); // slate-900
+  const titreUpper = titre.toUpperCase();
+  doc.text(titreUpper, cx, cursorY, { align: 'center' });
+
+  // Soulignement sous le titre
+  const titleWidth = doc.getTextWidth(titreUpper);
+  doc.setDrawColor(15, 23, 42);
+  doc.setLineWidth(0.4);
+  doc.line(cx - titleWidth / 2, cursorY + 1.2, cx + titleWidth / 2, cursorY + 1.2);
+
+  // 5. Métadonnées (période, filtres, exportateur, date)
+  cursorY += 5;
+  const metaParts: string[] = [];
+  if (sousTitre) metaParts.push(sousTitre);
+  if (utilisateur) metaParts.push(`Exporté par ${utilisateur}`);
+  metaParts.push(`Le ${fmtDate(new Date())}`);
+  const metaText = metaParts.join('   •   ');
+
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.text('Archidiocèse de Cotonou — Bénin', 198, 10, { align: 'right' });
-  doc.text(titre, 198, 16, { align: 'right' });
-  doc.setTextColor(71, 85, 105);
-  doc.setFontSize(8);
-  doc.text(
-    `Période : ${periode}   •   Exporté le ${fmtDate(new Date())} par ${utilisateur}`,
-    12,
-    30
-  );
-  return 34;
+  doc.setFontSize(7.5);
+  doc.setTextColor(71, 85, 105); // slate-600
+
+  // Si le texte est trop large pour la zone imprimable, répartir sur deux lignes
+  const maxW = pageWidth - 24;
+  if (doc.getTextWidth(metaText) > maxW) {
+    if (sousTitre) {
+      doc.text(sousTitre, cx, cursorY, { align: 'center' });
+      cursorY += 3.5;
+    }
+    const infoExport = `Exporté le ${fmtDate(new Date())}${utilisateur ? ` par ${utilisateur}` : ''}`;
+    doc.text(infoExport, cx, cursorY, { align: 'center' });
+  } else {
+    doc.text(metaText, cx, cursorY, { align: 'center' });
+  }
+
+  // Retourne la position Y où le tableau ou corps du document commence
+  return cursorY + 4;
 }
 
+/**
+ * Pied de page officiel sur toutes les pages du document.
+ * S'adapte dynamiquement à la largeur et hauteur de la page (portrait / paysage).
+ */
 function piedPage(doc: jsPDF) {
   const n = doc.getNumberOfPages();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
   for (let i = 1; i <= n; i++) {
     doc.setPage(i);
-    doc.setFontSize(8);
-    doc.setTextColor(148, 163, 184);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(148, 163, 184); // slate-400
     doc.text(
-      `CDLJ Akogbato — document généré par l'application de gestion — page ${i}/${n}`,
-      105,
-      291,
+      `CDLJ Akogbato — Paroisse Sainte Famille — Document officiel — Page ${i}/${n}`,
+      pageWidth / 2,
+      pageHeight - 6,
       { align: 'center' }
     );
+  }
+}
+
+/**
+ * Sauvegarde le document PDF de manière fiable quel que soit le terminal
+ * (ordinateur de bureau, téléphone mobile Android, iPhone/iPad iOS).
+ */
+function sauvegarderPdf(doc: jsPDF, nomFichier: string) {
+  try {
+    doc.save(nomFichier);
+  } catch (err) {
+    console.warn('doc.save() a échoué, utilisation du fallback Blob :', err);
+    try {
+      const blob = doc.output('blob');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = nomFichier;
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 1000);
+    } catch (e2) {
+      console.error('Échec critique de la sauvegarde PDF :', e2);
+    }
   }
 }
 
@@ -71,13 +194,13 @@ function table(doc: jsPDF, opts: Parameters<typeof autoTable>[1]) {
   autoTable(doc, {
     theme: 'grid',
     styles: { fontSize: 8, cellPadding: 1.5 },
-    headStyles: { fillColor: BLEU, fontSize: 8 },
+    headStyles: { fillColor: BLEU_CDLJ, fontSize: 8 },
     ...opts,
   });
 }
 
 // ------------------------------------------------------------------
-// Fiche mensuelle des cotisations
+// 1. Fiche mensuelle des cotisations
 // ------------------------------------------------------------------
 export function exportCotisations(args: {
   annee: number;
@@ -100,7 +223,7 @@ export function exportCotisations(args: {
   const y = entete(
     doc,
     'Fiche des cotisations',
-    `${args.periode ?? moisLabel(annee, mois)}${fraternite ? ` — ${fraternite}` : ' — vue globale'}`,
+    `${args.periode ?? moisLabel(annee, mois)}${fraternite ? ` — ${fraternite}` : ' — Vue globale'}`,
     auteur
   );
 
@@ -126,11 +249,11 @@ export function exportCotisations(args: {
 
   table(doc, { startY: y, head, body, foot: undefined });
   piedPage(doc);
-  doc.save(`cdlj_cotisations_${annee}-${String(mois + 1).padStart(2, '0')}.pdf`);
+  sauvegarderPdf(doc, `cdlj_cotisations_${annee}-${String(mois + 1).padStart(2, '0')}.pdf`);
 }
 
 // ------------------------------------------------------------------
-// Fiche mensuelle des présences
+// 2. Fiche mensuelle des présences
 // ------------------------------------------------------------------
 export function exportPresences(args: {
   annee: number;
@@ -152,7 +275,7 @@ export function exportPresences(args: {
   const y = entete(
     doc,
     'Fiche des présences',
-    `${args.periode ?? moisLabel(annee, mois)}${fraternite ? ` — ${fraternite}` : ' — vue globale'}`,
+    `${args.periode ?? moisLabel(annee, mois)}${fraternite ? ` — ${fraternite}` : ' — Vue globale'}`,
     auteur
   );
 
@@ -180,11 +303,11 @@ export function exportPresences(args: {
 
   table(doc, { startY: y, head, body });
   piedPage(doc);
-  doc.save(`cdlj_presences_${annee}-${String(mois + 1).padStart(2, '0')}.pdf`);
+  sauvegarderPdf(doc, `cdlj_presences_${annee}-${String(mois + 1).padStart(2, '0')}.pdf`);
 }
 
 // ------------------------------------------------------------------
-// Bilan d'un événement
+// 3. Bilan d'un événement
 // ------------------------------------------------------------------
 export function exportEvenementBilan(args: {
   evenement: Evenement;
@@ -202,12 +325,14 @@ export function exportEvenementBilan(args: {
     auteur
   );
 
-  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
   doc.setTextColor(51, 65, 85);
   doc.text(
     `Lieu : ${e.lieu ?? '—'}   •   Participation : ${fmtMoney(e.montant_participation)}   •   Statut : ${e.statut === 'en_cours' ? 'En cours' : 'Terminé'}   •   Participants : ${participants.length}`,
-    12,
-    y + 2
+    doc.internal.pageSize.getWidth() / 2,
+    y,
+    { align: 'center' }
   );
 
   const head = [
@@ -232,21 +357,23 @@ export function exportEvenementBilan(args: {
     ];
   });
 
-  table(doc, { startY: y + 6, head, body });
+  table(doc, { startY: y + 5, head, body });
   const finY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
-  doc.setFontSize(10);
+  doc.setFontSize(9.5);
   doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
   doc.text(
     `Total collecté : ${fmtMoney(totalCollecte)}   •   Total restant : ${fmtMoney(Math.max(totalAttendu - totalCollecte, 0))}   •   Attendu : ${fmtMoney(totalAttendu)}`,
-    12,
-    finY
+    doc.internal.pageSize.getWidth() / 2,
+    finY,
+    { align: 'center' }
   );
   piedPage(doc);
-  doc.save(`cdlj_evenement_${e.date_evenement}.pdf`);
+  sauvegarderPdf(doc, `cdlj_evenement_${e.date_evenement}.pdf`);
 }
 
 // ------------------------------------------------------------------
-// État de la caisse
+// 4. État de la caisse
 // ------------------------------------------------------------------
 export function exportCaisse(args: {
   periode: string;
@@ -259,7 +386,7 @@ export function exportCaisse(args: {
 }) {
   const { periode, lignes, totalPaye, totalEnc, totalDec, soldeGeneral, auteur } = args;
   const doc = new jsPDF();
-  const y = entete(doc, 'État de la caisse (générale)', periode, auteur);
+  const y = entete(doc, 'État de la caisse (générale)', `Période : ${periode}`, auteur);
 
   const head = [['Date', 'Type', 'Libellé', 'Auteur', 'Montant']];
   const body = lignes.map((l) => [
@@ -272,21 +399,21 @@ export function exportCaisse(args: {
 
   table(doc, { startY: y, head, body });
   const finY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
-  doc.setFontSize(10);
+  doc.setFontSize(9.5);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(51, 65, 85);
-  doc.text(`Cotisations du mois : ${fmtMoney(totalPaye)}`, 12, finY);
-  doc.text(`Encaissements : ${fmtMoney(totalEnc)}`, 12, finY + 6);
-  doc.text(`Décaissements : -${fmtMoney(totalDec)}`, 12, finY + 12);
-  doc.setTextColor(26, 86, 219);
-  doc.setFontSize(11);
-  doc.text(`Solde général de la caisse : ${fmtMoney(soldeGeneral)}`, 12, finY + 20);
+  doc.text(`Cotisations du mois : ${fmtMoney(totalPaye)}`, 14, finY);
+  doc.text(`Encaissements : ${fmtMoney(totalEnc)}`, 14, finY + 5);
+  doc.text(`Décaissements : -${fmtMoney(totalDec)}`, 14, finY + 10);
+  doc.setTextColor(BLEU_CDLJ[0], BLEU_CDLJ[1], BLEU_CDLJ[2]);
+  doc.setFontSize(10.5);
+  doc.text(`Solde général de la caisse : ${fmtMoney(soldeGeneral)}`, 14, finY + 18);
   piedPage(doc);
-  doc.save(`cdlj_caisse_${periode.replace(/\s/g, '_')}.pdf`);
+  sauvegarderPdf(doc, `cdlj_caisse_${periode.replace(/\s/g, '_')}.pdf`);
 }
 
 // ------------------------------------------------------------------
-// Fiche individuelle d'un lecteur
+// 5. Fiche individuelle d'un lecteur
 // ------------------------------------------------------------------
 export function exportFicheLecteur(args: {
   lecteur: Lecteur;
@@ -302,18 +429,19 @@ export function exportFicheLecteur(args: {
   const { lecteur: l, grades, history, presences, cotisations, evenements, appreciations, auteur, montantCot } =
     args;
   const doc = new jsPDF();
-  const y = entete(doc, 'Fiche individuelle du lecteur', l.matricule, auteur);
+  const y = entete(
+    doc,
+    'Fiche individuelle du lecteur',
+    `Matricule : ${l.matricule} — ${l.prenom} ${l.nom.toUpperCase()}`,
+    auteur
+  );
 
   const gradeNom = (id: number) => grades.find((g) => g.id === id)?.nom ?? '—';
 
   let cursor = y + 2;
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'bold');
-  doc.text(`${l.prenom} ${l.nom.toUpperCase()}`, 12, cursor);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  cursor += 5;
   const infos: [string, string][] = [
+    ['Matricule', l.matricule],
+    ['Nom & Prénom', `${l.nom.toUpperCase()} ${l.prenom}`],
     ['Date de naissance', fmtDate(l.date_naissance)],
     ['Grade actuel', gradeNom(l.grade_id)],
     ['Année d\'adhésion', String(l.annee_adhesion ?? '—')],
@@ -326,8 +454,9 @@ export function exportFicheLecteur(args: {
 
   // Historique des grades
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.text('Historique des grades', 12, cursor);
+  doc.setFontSize(9.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Historique des grades', 14, cursor);
   cursor += 3;
   table(doc, {
     startY: cursor,
@@ -338,8 +467,9 @@ export function exportFicheLecteur(args: {
 
   // Présences (12 derniers mois)
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.text('Présences — 12 derniers mois', 12, cursor);
+  doc.setFontSize(9.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Présences — 12 derniers mois', 14, cursor);
   cursor += 3;
   const now = new Date();
   const rows: string[][] = [];
@@ -367,8 +497,9 @@ export function exportFicheLecteur(args: {
 
   // Cotisations (12 derniers mois)
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.text('Cotisations — 12 derniers mois', 12, cursor);
+  doc.setFontSize(9.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Cotisations — 12 derniers mois', 14, cursor);
   cursor += 3;
   const rowsC: string[][] = [];
   for (let i = 11; i >= 0; i--) {
@@ -395,8 +526,9 @@ export function exportFicheLecteur(args: {
 
   // Événements
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.text('Événements', 12, cursor);
+  doc.setFontSize(9.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Événements', 14, cursor);
   cursor += 3;
   table(doc, {
     startY: cursor,
@@ -407,8 +539,9 @@ export function exportFicheLecteur(args: {
 
   // Appréciations
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.text('Blâmes, avertissements & appréciations', 12, cursor);
+  doc.setFontSize(9.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Blâmes, avertissements & appréciations', 14, cursor);
   cursor += 3;
   table(doc, {
     startY: cursor,
@@ -421,11 +554,11 @@ export function exportFicheLecteur(args: {
   });
 
   piedPage(doc);
-  doc.save(`cdlj_fiche_${l.matricule}.pdf`);
+  sauvegarderPdf(doc, `cdlj_fiche_${l.matricule}.pdf`);
 }
 
 // ------------------------------------------------------------------
-// Liste des lecteurs (onglet Lecteurs — reflète les filtres actifs)
+// 6. Liste des lecteurs (onglet Lecteurs — reflète les filtres actifs)
 // ------------------------------------------------------------------
 export function exportListeLecteurs(args: {
   lecteurs: Lecteur[];
@@ -506,11 +639,11 @@ export function exportListeLecteurs(args: {
   const finY =
     (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable
       .finalY + 6;
-  doc.setFontSize(10);
+  doc.setFontSize(9.5);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(51, 65, 85);
-  doc.text(`Total : ${lecteurs.length} lecteur(s) — ${filtres}`, 12, finY);
+  doc.text(`Total : ${lecteurs.length} lecteur(s)   •   ${filtres}`, 14, finY);
   piedPage(doc);
   const horodatage = new Date().toISOString().slice(0, 10);
-  doc.save(`cdlj_liste_lecteurs_${statut}_${horodatage}.pdf`);
+  sauvegarderPdf(doc, `cdlj_liste_lecteurs_${statut}_${horodatage}.pdf`);
 }

@@ -94,14 +94,16 @@ Le schéma vit dans [`supabase/migrations/`](supabase/migrations) — **versionn
 | `20260914150500_fix_rls_event_terminate.sql` | `is_co()` bivalent (`co` **ou** `co_paroissial`) ; `evenements_update` avec **WITH CHECK** (le CO peut clôturer) ; `fraternites_delete` réaffirmé |
 | `20260914150600_allow_fraternity_change.sql` | `changer_fraternite()` tout rôle + trigger `check_lecteur_update` + policy `lecteurs_update_fraternite` |
 | `20260914150700_fix_audit_trigger.sql` | `audit_trigger()` via `to_jsonb()` — plus de référence à `new.matricule` (bug qui bloquait **tous** les INSERT) |
+| `20260915120000_rename_grades_animation.sql` | Renommage des grades 5 et 6 (« Animation Grand I/II » → « Animation I/II ») |
 
 Si l'intégration Git n'a pas encore appliqué ces migrations, coller dans le **SQL Editor** (idempotents, contenu identique) :
 
 | Script manuel | Équivalent |
 |---|---|
+| [`supabase/fix_audit_trigger_manual.sql`](supabase/fix_audit_trigger_manual.sql) | `14150700` — **à exécuter en priorité** |
 | [`supabase/fix_rls_manual.sql`](supabase/fix_rls_manual.sql) | `14150200` (contrainte de rôle) + `14150500` |
 | [`supabase/fix_fraternite_manual.sql`](supabase/fix_fraternite_manual.sql) | `14150600` |
-| [`supabase/fix_audit_trigger_manual.sql`](supabase/fix_audit_trigger_manual.sql) | `14150700` — **à exécuter en priorité** |
+| [`supabase/rename_grades_animation_manual.sql`](supabase/rename_grades_animation_manual.sql) | `15120000` (renommage grades) |
 
 **Synchronisation GitHub → Supabase (intégration officielle) :**
 Dashboard Supabase → **Settings → Integrations → GitHub** → Connecter `Frejustecrack/Lecteurs` sur la branche `main`. Chaque nouveau fichier `supabase/migrations/*.sql` poussé sur `main` est appliqué automatiquement.
@@ -175,7 +177,7 @@ Recommandé : **Authentication → Settings** → désactiver *Enable email sign
 
 **Règle “à preuve du contraire” :** un samedi **arrivé** non pointé = **rouge** = absence (ou cotisation due). Un samedi **à venir** = neutre = non comptabilisé. Les samedis à venir n'entrent dans aucun total (KPIs, graphiques, Suivis).
 
-Cinq PDFs côté client (`src/pdf/export.ts` + `jspdf`/`jspdf-autotable`) : présences, cotisations, bilan événement, état de caisse, fiche lecteur. Chaque export est `log_action('export.pdf')`.
+Six exports PDF côté client (`src/pdf/export.ts` + `jspdf`/`jspdf-autotable`) : présences, cotisations, bilan événement, état de caisse, fiche lecteur, liste des lecteurs. Tous les documents partagent **l'en-tête officiel CDLJ** (reproduction conforme de `Document 1.pdf` avec logo CDLJ, image Sainte Famille, mention vicariale/archidiocèse, bandeau doré `#ffd966` et pied de page officiel). L'en-tête et les tableaux s'adaptent dynamiquement à l'orientation (portrait / paysage) et au terminal (téléphone mobile / tablette / ordinateur). Chaque export est tracé via `log_action('export.pdf')`.
 
 ## 7. Règles métier structurantes
 
@@ -211,7 +213,9 @@ src/
 │  ├─ ErrorBoundary.tsx
 │  └─ ui.tsx             Btn*, Badge, StatCard, Modal, Field, Segmented, EyeToggle, StepNav…
 ├─ pages/                10 pages, une par module
-└─ pdf/export.ts         jsPDF + autoTable
+└─ pdf/
+   ├─ export.ts          jsPDF + autoTable (6 exports, adaptatifs portrait/paysage)
+   └─ headerAssets.ts    logos officiels base64 (CDLJ + Sainte Famille)
 
 supabase/
 ├─ migrations/           *.sql versionnés, appliqués auto par Supabase
@@ -220,6 +224,7 @@ supabase/
 ├─ fix_rls_manual.sql              is_co bivalent + clôture événement (SQL Editor)
 ├─ fix_fraternite_manual.sql       changer_fraternite (SQL Editor)
 ├─ fix_audit_trigger_manual.sql    audit jsonb (SQL Editor)
+├─ rename_grades_animation_manual.sql renommage grades Animation I/II (SQL Editor)
 └─ README.md             détail migrations
 
 scripts/verif.ts         91 vérifications logiques pures (sans DB)
