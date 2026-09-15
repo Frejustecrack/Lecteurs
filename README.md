@@ -88,9 +88,20 @@ Le schéma vit dans [`supabase/migrations/`](supabase/migrations) — **versionn
 | `20260913000000_initial_schema.sql` | 14 tables, 41 RLS, triggers, fonctions |
 | `20260914150000_fraternites_delete_any.sql` | suppression fraternité vide ouverte à tout rôle |
 | `20260914150100_enable_realtime.sql` | publication `supabase_realtime` + `replica identity full` |
-| `20260914150200_evenements_delete_co.sql` | `co`/`co_paroissial` peut supprimer un événement + élargit la contrainte `profiles_role_check` |
+| `20260914150200_evenements_delete_co.sql` | `co`/`co_paroissial` peut supprimer un événement ; contrainte `profiles_role_check` élargie (`DROP IF EXISTS`, rejouable) |
 | `20260914150300_clean_test_data.sql` | remise à zéro pour livraison (voir §13) |
 | `20260914150400_security_hardening.sql` | durcissement RLS, contraintes, révocations |
+| `20260914150500_fix_rls_event_terminate.sql` | `is_co()` bivalent (`co` **ou** `co_paroissial`) ; `evenements_update` avec **WITH CHECK** (le CO peut clôturer) ; `fraternites_delete` réaffirmé |
+| `20260914150600_allow_fraternity_change.sql` | `changer_fraternite()` tout rôle + trigger `check_lecteur_update` + policy `lecteurs_update_fraternite` |
+| `20260914150700_fix_audit_trigger.sql` | `audit_trigger()` via `to_jsonb()` — plus de référence à `new.matricule` (bug qui bloquait **tous** les INSERT) |
+
+Si l'intégration Git n'a pas encore appliqué ces migrations, coller dans le **SQL Editor** (idempotents, contenu identique) :
+
+| Script manuel | Équivalent |
+|---|---|
+| [`supabase/fix_rls_manual.sql`](supabase/fix_rls_manual.sql) | `14150200` (contrainte de rôle) + `14150500` |
+| [`supabase/fix_fraternite_manual.sql`](supabase/fix_fraternite_manual.sql) | `14150600` |
+| [`supabase/fix_audit_trigger_manual.sql`](supabase/fix_audit_trigger_manual.sql) | `14150700` — **à exécuter en priorité** |
 
 **Synchronisation GitHub → Supabase (intégration officielle) :**
 Dashboard Supabase → **Settings → Integrations → GitHub** → Connecter `Frejustecrack/Lecteurs` sur la branche `main`. Chaque nouveau fichier `supabase/migrations/*.sql` poussé sur `main` est appliqué automatiquement.
@@ -115,6 +126,7 @@ python3 -c "import pglast,sys; pglast.parse_sql(open(sys.argv[1]).read()); print
 | Gérer comptes / voir logs | ✅ | — | — | — |
 | Modifier fiche lecteur / archiver / changer grade | ✅ | ✅ | — | — |
 | Créer lecteur / fraternité / appréciation | ✅ | ✅ | ✅ | ✅ |
+| Changer la fraternité d'un lecteur | ✅ | ✅ | ✅ | ✅ |
 | Supprimer fraternité **vide** | ✅ | ✅ | ✅ | ✅ |
 | Pointer présences | ✅ | ✅ | ✅ | ✅ |
 | Corriger présence gelée | ✅ | — | — | — |
@@ -145,18 +157,19 @@ Recommandé : **Authentication → Settings** → désactiver *Enable email sign
 
 - **Username affiché est fixe** (issu de `profiles.username`, jamais éditable côté app). Aucun formulaire ne permet de le modifier ; seul l'Admin peut changer le rôle.
 - **Mot de passe :** tout utilisateur connecté peut le modifier via le menu latéral **“Mot de passe”** (sidebar desktop + drawer mobile → `Layout.tsx`). Le formulaire appelle `supabase.auth.updateUser({ password })` (8 caractères min, confirmation obligatoire). Aucune déconnexion forcée, un toast confirme. Le mot de passe n'est **jamais** loggé ni stocké en clair — géré intégralement par Supabase Auth.
+- **Afficher / masquer :** bouton œil (`EyeToggle`, SVG inline dans `ui.tsx`) sur le champ de connexion et sur les deux champs de la modale. La modale **re-masque** les champs à la fermeture.
 
 ## 6. Modules
 
 | Module | Route | Points clés |
 |---|---|---|
 | **Tableau de bord** | `/` | KPIs mois en cours (actifs, taux présence, présents/samedi, taux cotisation, caisse générale, événements en cours) + 3 graphiques 6 mois (présences/absences, effectif, cotisations) + avancement paiements événements. Temps réel. |
-| **Lecteurs** | `/lecteurs`, `/lecteurs/:id` | Matricule auto `LEC100…` jamais réattribué, archivage (pas de delete), changement de grade historisé via `changer_grade()`, appréciations soft-delete, export fiche PDF. |
-| **Fraternités** | `/fraternites` | Nom + responsables (simples noms). Création par tous, renommage admin/co, **suppression par tout rôle si vide** (FK bloque si des lecteurs y sont encore). |
-| **Présences** | `/presences` | **Vue mensuelle** (3-5 samedis, `overflow-x`) ou **hebdomadaire** (1 samedi, **cartes sur mobile sans scroll**, tableau compact sur desktop). Gel automatique des samedis passés (RLS `dernier_samedi()`), correction Admin tracée. |
+| **Lecteurs** | `/lecteurs`, `/lecteurs/:id` | Matricule auto `LEC100…` jamais réattribué, archivage (pas de delete), **changement de fraternité par tout rôle** (`changer_fraternite()`, carte dédiée + temps réel), changement de grade historisé via `changer_grade()`, appréciations soft-delete, export fiche PDF. |
+| **Fraternités** | `/fraternites` | Nom + responsables (simples noms). Création par tous, renommage admin/co, **suppression par tout rôle si vide** (FK bloque si des lecteurs y sont encore). Temps réel. |
+| **Présences** | `/presences` | **Vue mensuelle** (3-5 samedis, `overflow-x`) ou **hebdomadaire** (1 samedi, **cartes sur mobile sans scroll**, tableau compact sur desktop). Légende en **chips** aux couleurs des cellules (vert / rouge / gris pointillé). Gel automatique des samedis passés (RLS `dernier_samedi()`), correction Admin tracée. |
 | **Suivis** | `/suivis` | Récap `present/absent/nonSaisi/taux` via `src/lib/recap.ts`. Filtres *absents / assidus / saisie incomplète*, filtre samedi précis, fraternité, recherche, tri colonnes. Cartes sur mobile, tableau sur desktop. |
 | **Cotisations** | `/cotisations` | 50 F / samedi / lecteur (paramétrable dans `app_settings`). Vue mensuelle/hebdo (même UX que Présences). Saisie **Caissier uniquement**, pas de gel, mois passés modifiables. |
-| **Événements** | `/evenements`, `/evenements/:id` | Création par CO, inscription par matricule, paiements en tranches (trigger `check_tranche` : total ≤ participation), **suppression par CO/Admin** (cascade participants/paiements/caisse + log `evenement.suppression`), clôture `en_cours→termine` + réouverture Admin. |
+| **Événements** | `/evenements`, `/evenements/:id` | Création par CO, inscription par matricule, paiements en tranches (trigger `check_tranche` : total ≤ participation), **suppression par CO/Admin** (cascade participants/paiements/caisse + log `evenement.suppression`), **clôture CO** `en_cours→termine` (policy `evenements_update` WITH CHECK) + réouverture Admin. |
 | **Caisse** | `/caisse` | Caisse générale = cotisations payées + encaissements − décaissements (`event_id IS NULL`). Opérations CO uniquement. Export PDF. |
 | **Administration** | `/admin` | Logs (400 derniers), comptes & rôles, montant cotisation — **Admin uniquement** (RLS `is_admin()`). |
 
@@ -171,9 +184,11 @@ Cinq PDFs côté client (`src/pdf/export.ts` + `jspdf`/`jspdf-autotable`) : pré
 - **Gel** : `public.dernier_samedi()` (samedi courant ou précédent). RLS `presences_insert/update` refuse si `date_samedi < dernier_samedi()` sauf `is_admin()`.
 - **Samedis à venir** : `samediEstArrive()` / `samedisArrives()` — un samedi futur n'est pas une absence ni une cotisation due.
 - **Cotisations** : l'absence ne dispense pas. Le montant est dans `app_settings.montant_cotisation` (Admin).
-- **Événements** : `en_cours ↔ termine` via RLS `statut`. Paiements en tranches bloqués si `sum(montant) + new.montant > montant_participation`.
+- **Fraternité :** tout rôle authentifié peut rattacher / détacher un lecteur via `changer_fraternite()` (journal `lecteur.fraternite`). Un UPDATE direct hors Admin/CO ne peut toucher qu'à `fraternite_id` (`check_lecteur_update`). Détachement `NULL` autorisé.
+- **Événements :** `en_cours ↔ termine` via RLS `statut`. Policy `evenements_update` : USING (ancienne ligne encore `en_cours`) + **WITH CHECK** (nouvelle ligne `en_cours` ou `termine`) — sans WITH CHECK, PostgreSQL réutilise USING sur la nouvelle ligne et le CO ne peut pas clôturer. Paiements en tranches bloqués si `sum(montant) + new.montant > montant_participation`.
 - **Caisses séparées** : générale (`event_id IS NULL`) vs une par événement.
 - **Conservation** : `lecteur_grades`, `appreciations` soft-delete, `logs` jamais purgés (sauf remise à zéro livraison).
+- **Audit :** `audit_trigger()` est partagé par 10 tables ; les colonnes sont lues via `to_jsonb()` (plus de `new.matricule` compilé, qui n'existe que sur `lecteurs`).
 
 ## 8. Organisation du code
 
@@ -194,14 +209,17 @@ src/
 ├─ components/
 │  ├─ Layout.tsx         sidebar + drawer mobile + changement mot de passe
 │  ├─ ErrorBoundary.tsx
-│  └─ ui.tsx             Btn*, Badge, StatCard, Modal, Field, Segmented, StepNav…
+│  └─ ui.tsx             Btn*, Badge, StatCard, Modal, Field, Segmented, EyeToggle, StepNav…
 ├─ pages/                10 pages, une par module
 └─ pdf/export.ts         jsPDF + autoTable
 
 supabase/
 ├─ migrations/           *.sql versionnés, appliqués auto par Supabase
 ├─ seed-comptes.sql      set_role en lot (une fois)
-├─ clean_test_data_manual.sql  script manuel pour remise à zéro
+├─ clean_test_data_manual.sql      script manuel pour remise à zéro
+├─ fix_rls_manual.sql              is_co bivalent + clôture événement (SQL Editor)
+├─ fix_fraternite_manual.sql       changer_fraternite (SQL Editor)
+├─ fix_audit_trigger_manual.sql    audit jsonb (SQL Editor)
 └─ README.md             détail migrations
 
 scripts/verif.ts         91 vérifications logiques pures (sans DB)
@@ -212,24 +230,26 @@ scripts/verif.ts         91 vérifications logiques pures (sans DB)
 - **Design system :** Tailwind 4, couleur principale `cdlj #1a56db`, `Inter` partout, coins `2xl`, ombres douces, `backdrop-blur` sur sidebar/header/modales.
 - **Fluidité :** `pressCls` (`active:scale-[0.96]`), `iconPressCls`, transitions `150ms`, `will-change-transform`, animations `cdlj-toast-in` / `cdlj-modal-in` / `cdlj-drawer-in`, `scroll-behavior:smooth`, `prefers-reduced-motion` respecté.
 - **Mobile first :** drawer avec `cdlj-drawer` + `cdlj-backdrop`, tableaux `overflow-x-auto` uniquement en **mensuel**, **cartes** en **hebdomadaire** (Présences/Cotisations) et en **Suivis** → aucun scroll horizontal imposé pour 1 samedi.
-- **Accessibilité :** `focus-visible:ring`, `aria-*`, labels, `touch-manipulation`.
+- **Accessibilité :** `focus-visible:ring`, `aria-*`, labels, `touch-manipulation`. Bouton œil (`EyeToggle`) sur tous les champs mot de passe (connexion + modale) ; la modale re-masque à la fermeture.
 
 ## 10. Sécurité
 
 - **RLS partout** — 14 tables, `enable row level security`, ~45 politiques. Les droits sont vérifiés **dans la base**, pas seulement dans l'UI. Un bypass front se heurte au 403 traduit en `Vous n'êtes pas autorisé à…`.
 - **Clés :** seule `VITE_SUPABASE_PUBLISHABLE_KEY` (anon) côté front. `service_role` **jamais** commité, RLS contourné uniquement côté SQL Editor.
-- **Fonctions sensibles :** `set_role` révoquée pour `anon/authenticated`, `log_action` et `changer_grade` `security definer` avec checks internes.
-- **Gel & contraintes :** `estGelee` + RLS date, `check_tranche`, `evenements_montant_check`, `profiles_username_not_empty`, FK `lecteurs.fraternite_id` (bloque suppression fraternité non vide), `appreciations` soft-delete.
+- **Fonctions sensibles :** `set_role` révoquée pour `anon/authenticated` ; `log_action`, `changer_grade` et `changer_fraternite` en `security definer` avec checks internes (`changer_fraternite` accordée à `authenticated` uniquement).
+- **Gel & contraintes :** `estGelee` + RLS date, `check_tranche`, `evenements_montant_check`, `profiles_username_not_empty`, FK `lecteurs.fraternite_id` (bloque suppression fraternité non vide), `appreciations` soft-delete, trigger `check_lecteur_update` (filtrage colonne par colonne).
+- **Clôture d'événement :** `evenements_update` WITH CHECK explicite (migration `14150500`) — le CO peut passer `en_cours → termine` ; un événement déjà terminé reste intouchable pour lui.
+- **Audit :** `audit_trigger()` via `to_jsonb()` (migration `14150700`) — plus de référence à un champ inexistant à la compilation PL/pgSQL.
 - **Mots de passe :** gérés par Supabase Auth (`updateUser`), jamais en clair, jamais loggés.
 - **XSS/CSRF :** pas de `dangerouslySetInnerHTML`, pas de cookies d'auth, Supabase JWT en `localStorage` avec `autoRefreshToken`.
 
-Voir `supabase/migrations/20260914150400_security_hardening.sql` pour le durcissement idempotent.
+Voir `supabase/migrations/20260914150400_security_hardening.sql` pour le durcissement idempotent, puis `14150500`–`14150700` pour les correctifs RLS / fraternité / audit.
 
 ## 11. Temps réel & synchronisation
 
 Depuis `20260914150100_enable_realtime.sql`, les tables `presences`, `cotisations`, `lecteurs`, `fraternites` sont dans la publication `supabase_realtime` (`replica identity full`).
 
-Chaque page qui affiche des présences s'abonne :
+Chaque page qui affiche des données partagées s'abonne, par exemple :
 
 ```ts
 supabase.channel('realtime-presences')
@@ -237,7 +257,16 @@ supabase.channel('realtime-presences')
   .subscribe()
 ```
 
-+ `window focus` / `visibilitychange` → refetch si l'onglet revient. Une modification de présence est visible **partout** (Dashboard KPIs, Suivis, fiche lecteur) sans F5, même si deux utilisateurs pointent en même temps.
+| Page | Tables écoutées |
+|---|---|
+| Dashboard | `presences`, `cotisations`, `lecteurs` |
+| Présences | `presences` |
+| Cotisations | `cotisations` |
+| Suivis | `presences`, `lecteurs` |
+| Fraternités | `fraternites`, `lecteurs` |
+| Fiche lecteur | `presences` / `cotisations` filtrés + `UPDATE` sur `lecteurs` (changement de fraternité ailleurs) |
+
++ `window focus` / `visibilitychange` → refetch si l'onglet revient. Une modification de présence ou de fraternité est visible **partout** (Dashboard KPIs, Suivis, fiche lecteur) sans F5, même si deux utilisateurs pointent en même temps.
 
 ## 12. Déploiement
 
@@ -292,6 +321,9 @@ Le script `scripts/verif.ts` importe le **vrai** code de `src/lib/` (pas une cop
 - **Présence gelée** → seul Admin peut corriger un samedi `< dernier_samedi()`.
 - **Matricule déjà pris** → `LEC…` unique, ne jamais le forcer manuellement.
 - **Realtime ne se déclenche pas** → vérifier que `supabase_realtime` contient bien la table (migration `20260914150100`) et que le projet Supabase a Realtime activé (Database → Realtime).
+- **Clôturer un événement échoue (RLS)** → appliquer `20260914150500` (ou `fix_rls_manual.sql`). Sans `WITH CHECK`, le CO ne peut pas passer un événement à `termine`.
+- **INSERT impossible (`record "new" has no field "matricule"`)** → appliquer `20260914150700` (ou `fix_audit_trigger_manual.sql`) **en priorité**. Sans ce correctif, aucun insert ne passe sur `fraternites` / `lecteurs` / `presences` / `cotisations` / `evenements`.
+- **Changer la fraternité refusé / fonction introuvable** → appliquer `20260914150600` (ou `fix_fraternite_manual.sql`). L'app retombe sur un UPDATE direct si le RPC n'existe pas encore (`42883` / `PGRST202`).
 
 ---
 
