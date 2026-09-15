@@ -12,12 +12,14 @@ supabase/
 │   ├── 20260914150400_security_hardening.sql
 │   ├── 20260914150500_fix_rls_event_terminate.sql
 │   ├── 20260914150600_allow_fraternity_change.sql
-│   └── 20260914150700_fix_audit_trigger.sql
+│   ├── 20260914150700_fix_audit_trigger.sql
+│   └── 20260915120000_rename_grades_animation.sql
 ├── seed-comptes.sql                 ← attribution des rôles — à exécuter UNE fois
 ├── clean_test_data_manual.sql       ← remise à zéro (SQL Editor)
 ├── fix_rls_manual.sql               ← is_co bivalent + clôture événement
 ├── fix_fraternite_manual.sql        ← changer_fraternite tout rôle
-└── fix_audit_trigger_manual.sql     ← audit jsonb (prioritaire)
+├── fix_audit_trigger_manual.sql     ← audit jsonb (prioritaire)
+└── rename_grades_animation_manual.sql ← renommage grades Animation I/II (SQL Editor)
 ```
 
 ## Contenu du schéma
@@ -45,6 +47,7 @@ Une migration **déjà appliquée ne se modifie jamais**. On ajoute un nouveau f
 | `20260914150500_fix_rls_event_terminate.sql` | `is_co()` bivalent ; `evenements_update` **WITH CHECK** (le CO peut clôturer `en_cours → termine`) ; `fraternites_delete` réaffirmé. |
 | `20260914150600_allow_fraternity_change.sql` | `changer_fraternite(uuid, uuid)` SECURITY DEFINER + trigger `check_lecteur_update` + policy `lecteurs_update_fraternite`. |
 | `20260914150700_fix_audit_trigger.sql` | `audit_trigger()` lit les colonnes via `to_jsonb()`. **Sans ce correctif, aucun INSERT ne passe** (`record "new" has no field "matricule"`). |
+| `20260915120000_rename_grades_animation.sql` | Renomme les grades 5 et 6 (« Animation Grand I/II » → « Animation I/II ») pour alignement nomenclature CDLJ. |
 
 ### Correctifs manuels (SQL Editor)
 
@@ -55,6 +58,7 @@ Si l'intégration GitHub n'a pas encore appliqué les migrations, coller ces scr
 | `fix_audit_trigger_manual.sql` | **En priorité** — équivalent `14150700`. |
 | `fix_rls_manual.sql` | Équivalent `14150200` (contrainte de rôle) + `14150500`. |
 | `fix_fraternite_manual.sql` | Équivalent `14150600`. |
+| `rename_grades_animation_manual.sql` | Équivalent `15120000` (renommage grades). |
 | `clean_test_data_manual.sql` | Remise à zéro, **une seule fois**. |
 
 ## Synchronisation GitHub ↔ Supabase (intégration Git)

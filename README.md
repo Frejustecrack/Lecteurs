@@ -94,14 +94,16 @@ Le schéma vit dans [`supabase/migrations/`](supabase/migrations) — **versionn
 | `20260914150500_fix_rls_event_terminate.sql` | `is_co()` bivalent (`co` **ou** `co_paroissial`) ; `evenements_update` avec **WITH CHECK** (le CO peut clôturer) ; `fraternites_delete` réaffirmé |
 | `20260914150600_allow_fraternity_change.sql` | `changer_fraternite()` tout rôle + trigger `check_lecteur_update` + policy `lecteurs_update_fraternite` |
 | `20260914150700_fix_audit_trigger.sql` | `audit_trigger()` via `to_jsonb()` — plus de référence à `new.matricule` (bug qui bloquait **tous** les INSERT) |
+| `20260915120000_rename_grades_animation.sql` | Renommage des grades 5 et 6 (« Animation Grand I/II » → « Animation I/II ») |
 
 Si l'intégration Git n'a pas encore appliqué ces migrations, coller dans le **SQL Editor** (idempotents, contenu identique) :
 
 | Script manuel | Équivalent |
 |---|---|
+| [`supabase/fix_audit_trigger_manual.sql`](supabase/fix_audit_trigger_manual.sql) | `14150700` — **à exécuter en priorité** |
 | [`supabase/fix_rls_manual.sql`](supabase/fix_rls_manual.sql) | `14150200` (contrainte de rôle) + `14150500` |
 | [`supabase/fix_fraternite_manual.sql`](supabase/fix_fraternite_manual.sql) | `14150600` |
-| [`supabase/fix_audit_trigger_manual.sql`](supabase/fix_audit_trigger_manual.sql) | `14150700` — **à exécuter en priorité** |
+| [`supabase/rename_grades_animation_manual.sql`](supabase/rename_grades_animation_manual.sql) | `15120000` (renommage grades) |
 
 **Synchronisation GitHub → Supabase (intégration officielle) :**
 Dashboard Supabase → **Settings → Integrations → GitHub** → Connecter `Frejustecrack/Lecteurs` sur la branche `main`. Chaque nouveau fichier `supabase/migrations/*.sql` poussé sur `main` est appliqué automatiquement.
@@ -220,6 +222,7 @@ supabase/
 ├─ fix_rls_manual.sql              is_co bivalent + clôture événement (SQL Editor)
 ├─ fix_fraternite_manual.sql       changer_fraternite (SQL Editor)
 ├─ fix_audit_trigger_manual.sql    audit jsonb (SQL Editor)
+├─ rename_grades_animation_manual.sql renommage grades Animation I/II (SQL Editor)
 └─ README.md             détail migrations
 
 scripts/verif.ts         91 vérifications logiques pures (sans DB)
