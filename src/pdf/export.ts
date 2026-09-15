@@ -14,6 +14,7 @@ import type {
   Cotisation,
   Evenement,
   EvenementPaiement,
+  Fraternite,
   Grade,
   Lecteur,
   LecteurGrade,
@@ -421,4 +422,95 @@ export function exportFicheLecteur(args: {
 
   piedPage(doc);
   doc.save(`cdlj_fiche_${l.matricule}.pdf`);
+}
+
+// ------------------------------------------------------------------
+// Liste des lecteurs (onglet Lecteurs — reflète les filtres actifs)
+// ------------------------------------------------------------------
+export function exportListeLecteurs(args: {
+  lecteurs: Lecteur[];
+  grades: Grade[];
+  fraternites: Fraternite[];
+  /** Nom de la fraternité filtrée, ou null si « toutes ». */
+  fraternite: string | null;
+  /** Nom du grade filtré, ou null si « tous ». */
+  grade: string | null;
+  /** Texte de recherche saisi (matricule, nom…), '' si aucun. */
+  recherche: string;
+  statut: 'actifs' | 'archives';
+  auteur: string;
+}) {
+  const { lecteurs, grades, fraternites, fraternite, grade, recherche, statut, auteur } =
+    args;
+  const doc = new jsPDF({ orientation: 'landscape' });
+  const gradeNom = (id: number) =>
+    grades.find((g) => g.id === id)?.nom ?? '—';
+  const fraterniteNom = (id: string | null) =>
+    fraternites.find((f) => f.id === id)?.nom ?? '—';
+
+  const filtres = [
+    statut === 'actifs' ? 'Actifs' : 'Archivés',
+    fraternite ?? 'Toutes les fraternités',
+    grade ?? 'Tous les grades',
+    recherche ? `Recherche : « ${recherche} »` : null,
+  ]
+    .filter(Boolean)
+    .join('  •  ');
+
+  const y = entete(
+    doc,
+    'Liste des lecteurs',
+    `${filtres} — ${lecteurs.length} lecteur(s)`,
+    auteur
+  );
+
+  const tries = [...lecteurs].sort((a, b) =>
+    a.matricule.localeCompare(b.matricule)
+  );
+  const head = [
+    [
+      'N°',
+      'Matricule',
+      'Nom',
+      'Prénom',
+      'Grade',
+      'Fraternité',
+      'Naissance',
+      'Adhésion',
+      'Contact parent / tuteur',
+    ],
+  ];
+  const body = tries.map((l, i) => [
+    String(i + 1),
+    l.matricule,
+    l.nom.toUpperCase(),
+    l.prenom,
+    gradeNom(l.grade_id),
+    fraterniteNom(l.fraternite_id),
+    fmtDate(l.date_naissance),
+    l.annee_adhesion ? String(l.annee_adhesion) : '—',
+    l.contact_parent ?? '—',
+  ]);
+
+  table(doc, {
+    startY: y,
+    head,
+    body,
+    columnStyles: {
+      0: { halign: 'right', cellWidth: 12 },
+      1: { cellWidth: 24 },
+      6: { halign: 'center' },
+      7: { halign: 'center' },
+    },
+  });
+  const finY =
+    (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable
+      .finalY + 6;
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(51, 65, 85);
+  doc.text(`Total : ${lecteurs.length} lecteur(s) — ${filtres}`, 12, finY);
+  piedPage(doc);
+  const horodatage = new Date().toISOString().slice(0, 10);
+  doc.save(`cdlj_liste_lecteurs_${statut}_${horodatage}.pdf`);
 }

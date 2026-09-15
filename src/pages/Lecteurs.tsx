@@ -24,6 +24,7 @@ import {
   Spinner,
   useToast,
 } from '../components/ui';
+import { exportListeLecteurs } from '../pdf/export';
 
 interface FormLecteur {
   nom: string;
@@ -60,12 +61,14 @@ export default function Lecteurs() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [fId, setFId] = useState('');
+  const [gradeId, setGradeId] = useState('');
   const [tab, setTab] = useState<'actifs' | 'archives'>('actifs');
   const [formOpen, setFormOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<FormLecteur>(FORM_VIDE);
   const [busy, setBusy] = useState(false);
   const [busyArchivage, setBusyArchivage] = useState<string | null>(null);
+  const [busyPdf, setBusyPdf] = useState(false);
 
   const load = useCallback(async () => {
     const [rL, rF, rG] = await Promise.all([
@@ -88,6 +91,7 @@ export default function Lecteurs() {
     return lecteurs.filter((l) => {
       if (tab === 'actifs' ? l.archived : !l.archived) return false;
       if (fId && l.fraternite_id !== fId) return false;
+      if (gradeId && l.grade_id !== Number(gradeId)) return false;
       if (!q) return true;
       return (
         l.matricule.toLowerCase().includes(q) ||
@@ -95,7 +99,15 @@ export default function Lecteurs() {
         l.prenom.toLowerCase().includes(q)
       );
     });
-  }, [lecteurs, tab, fId, search]);
+  }, [lecteurs, tab, fId, gradeId, search]);
+
+  const filtresActifs = fId !== '' || gradeId !== '' || search.trim() !== '';
+
+  function reinitialiserFiltres() {
+    setFId('');
+    setGradeId('');
+    setSearch('');
+  }
 
   function openCreate() {
     setEditId(null);
@@ -201,6 +213,49 @@ export default function Lecteurs() {
     load();
   }
 
+  /**
+   * Exporte en PDF la liste des lecteurs affichés, c'est-à-dire filtrés par
+   * l'onglet (actifs / archivés), la fraternité, le grade et la recherche.
+   * Le récapitulatif des filtres figure dans l'en-tête du document.
+   */
+  async function exporterPdf() {
+    if (filtered.length === 0) {
+      toast('Aucun lecteur à exporter avec les filtres actuels.', 'err');
+      return;
+    }
+    setBusyPdf(true);
+    try {
+      exportListeLecteurs({
+        lecteurs: filtered,
+        grades,
+        fraternites,
+        fraternite: fraternites.find((f) => f.id === fId)?.nom ?? null,
+        grade: grades.find((g) => g.id === Number(gradeId))?.nom ?? null,
+        recherche: search.trim(),
+        statut: tab,
+        auteur: profile?.full_name ?? profile?.username ?? '—',
+      });
+      await supabase.rpc('log_action', {
+        p_action: 'export.pdf',
+        p_objet_type: 'lecteurs',
+        p_objet_ref: tab,
+        p_detail: JSON.stringify({
+          document: 'liste_lecteurs',
+          statut: tab,
+          fraternite: fId || 'toutes',
+          grade: gradeId || 'tous',
+          recherche: search.trim() || null,
+          nombre: filtered.length,
+        }),
+      });
+      toast(`PDF généré — ${filtered.length} lecteur(s).`);
+    } catch (e) {
+      toast(traduireErreur(e, 'générer le PDF de la liste des lecteurs'), 'err');
+    } finally {
+      setBusyPdf(false);
+    }
+  }
+
   if (loading) return <Spinner label="Chargement des lecteurs…" />;
 
   const gradeNom = (id: number) => grades.find((g) => g.id === id)?.nom ?? '—';
@@ -213,16 +268,39 @@ export default function Lecteurs() {
         title="Lecteurs"
         sub={`${lecteurs.filter((l) => !l.archived).length} lecteur(s) actif(s)`}
         actions={
-          <BtnPrimary onClick={openCreate}>+ Nouveau lecteur</BtnPrimary>
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+            <BtnGhost
+              onClick={exporterPdf}
+              busy={busyPdf}
+              busyLabel="PDF…"
+              disabled={filtered.length === 0}
+              title={
+                filtered.length === 0
+                  ? 'Aucun lecteur à exporter avec les filtres actuels'
+                  : `Exporter les ${filtered.length} lecteur(s) affiché(s) en PDF`
+              }
+              className="w-full sm:w-auto"
+            >
+              ⬇ Export PDF ({filtered.length})
+            </BtnGhost>
+            <BtnPrimary onClick={openCreate} className="w-full sm:w-auto">
+              + Nouveau lecteur
+            </BtnPrimary>
+          </div>
         }
       />
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      {/*
+        Filtres — ordre demandé : fraternités, PUIS grade, PUIS recherche.
+        Sur téléphone : une colonne pleine largeur (sans zoom auto iOS grâce
+        au texte 16px) ; sur ordinateur : une ligne fluide.
+      */}
+      <div className="mb-3 grid gap-2 sm:flex sm:flex-wrap sm:items-center">
         <div className="flex rounded-lg border border-slate-200 bg-white p-0.5">
           <button
             onClick={() => setTab('actifs')}
             aria-pressed={tab === 'actifs'}
-            className={`rounded-md px-3 py-1.5 text-sm font-semibold ${pressCls} ${
+            className={`flex-1 rounded-md px-3 py-1.5 text-sm font-semibold sm:flex-none ${pressCls} ${
               tab === 'actifs' ? 'bg-cdlj text-white' : 'text-slate-600'
             }`}
           >
@@ -232,7 +310,7 @@ export default function Lecteurs() {
             <button
               onClick={() => setTab('archives')}
               aria-pressed={tab === 'archives'}
-              className={`rounded-md px-3 py-1.5 text-sm font-semibold ${pressCls} ${
+              className={`flex-1 rounded-md px-3 py-1.5 text-sm font-semibold sm:flex-none ${pressCls} ${
                 tab === 'archives' ? 'bg-cdlj text-white' : 'text-slate-600'
               }`}
             >
@@ -243,7 +321,8 @@ export default function Lecteurs() {
         <select
           value={fId}
           onChange={(e) => setFId(e.target.value)}
-          className={`${inputCls} w-auto`}
+          aria-label="Filtrer par fraternité"
+          className={`${inputCls} w-full text-base sm:w-auto sm:text-sm`}
         >
           <option value="">Toutes les fraternités</option>
           {fraternites.map((f) => (
@@ -252,13 +331,44 @@ export default function Lecteurs() {
             </option>
           ))}
         </select>
+        <select
+          value={gradeId}
+          onChange={(e) => setGradeId(e.target.value)}
+          aria-label="Filtrer par grade"
+          className={`${inputCls} w-full text-base sm:w-auto sm:text-sm`}
+        >
+          <option value="">Tous les grades</option>
+          {grades.map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.nom}
+            </option>
+          ))}
+        </select>
         <input
+          type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Rechercher (matricule, nom…)"
-          className={`${inputCls} max-w-xs flex-1`}
+          aria-label="Rechercher par matricule ou nom"
+          autoComplete="off"
+          enterKeyHint="search"
+          className={`${inputCls} w-full text-base sm:min-w-0 sm:max-w-xs sm:flex-1 sm:text-sm`}
         />
       </div>
+
+      {filtresActifs && (
+        <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          <span className="font-semibold text-slate-500">
+            {filtered.length} résultat(s) avec les filtres actuels
+          </span>
+          <button
+            onClick={reinitialiserFiltres}
+            className={`font-semibold text-cdlj hover:underline ${pressCls}`}
+          >
+            Réinitialiser les filtres
+          </button>
+        </div>
+      )}
 
       {filtered.length === 0 ? (
         <EmptyState
@@ -269,8 +379,61 @@ export default function Lecteurs() {
           }
         />
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full min-w-[640px] text-left text-sm">
+        <>
+          {/* Téléphones : cartes empilées — pas de scroll horizontal, lecture
+              immédiate, zones tactiles larges (iOS / Android). */}
+          <ul className="space-y-2 sm:hidden">
+            {filtered.map((l) => (
+              <li
+                key={l.id}
+                onClick={() => navigate(`/lecteurs/${l.id}`)}
+                className="cursor-pointer rounded-xl border border-slate-200 bg-white p-3 shadow-sm active:bg-slate-50"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-mono text-xs font-semibold text-cdlj">
+                      {l.matricule}
+                    </div>
+                    <div className="truncate text-sm font-semibold text-slate-800">
+                      {l.prenom} {l.nom.toUpperCase()}
+                    </div>
+                  </div>
+                  <Badge tone="blue">{gradeNom(l.grade_id)}</Badge>
+                </div>
+                <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-500">
+                  <span className="min-w-0 truncate">
+                    🤝 {fraterniteNom(l.fraternite_id)}
+                  </span>
+                  <span className="whitespace-nowrap">
+                    Adhésion : {l.annee_adhesion ?? '—'}
+                  </span>
+                </div>
+                {tab === 'actifs' && canEdit && (
+                  <div
+                    className="mt-2.5 flex gap-2 border-t border-slate-100 pt-2.5"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      onClick={() => openEdit(l)}
+                      className={`flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-cdlj active:bg-slate-50 ${pressCls}`}
+                    >
+                      Modifier
+                    </button>
+                    <button
+                      onClick={() => archiver(l)}
+                      disabled={busyArchivage === l.id}
+                      className={`flex-1 rounded-lg border border-red-100 bg-red-50/50 px-3 py-2 text-xs font-semibold text-alerte active:bg-red-50 ${pressCls}`}
+                    >
+                      {busyArchivage === l.id ? 'Archivage…' : 'Archiver'}
+                    </button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+          {/* Ordinateurs / tablettes : tableau complet. */}
+          <div className="hidden overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm sm:block">
+            <table className="w-full min-w-[640px] text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-3">Matricule</th>
@@ -322,7 +485,8 @@ export default function Lecteurs() {
               ))}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
 
       {tab === 'archives' &&
@@ -433,9 +597,16 @@ export default function Lecteurs() {
               croissante, et restera définitivement réservé.
             </p>
           )}
-          <div className="flex justify-end gap-2 pt-2">
-            <BtnGhost onClick={() => setFormOpen(false)}>Annuler</BtnGhost>
-            <BtnPrimary onClick={save} busy={busy} busyLabel="Enregistrement…">
+          <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+            <BtnGhost onClick={() => setFormOpen(false)} className="w-full sm:w-auto">
+              Annuler
+            </BtnGhost>
+            <BtnPrimary
+              onClick={save}
+              busy={busy}
+              busyLabel="Enregistrement…"
+              className="w-full sm:w-auto"
+            >
               Enregistrer
             </BtnPrimary>
           </div>
