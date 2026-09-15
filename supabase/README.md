@@ -4,8 +4,20 @@
 supabase/
 ├── README.md
 ├── migrations/
-│   └── 20260913000000_initial_schema.sql   ← schéma initial (déjà appliqué sur la prod)
-└── seed-comptes.sql   ← attribution des rôles aux 9 comptes — à exécuter UNE fois
+│   ├── 20260913000000_initial_schema.sql
+│   ├── 20260914150000_fraternites_delete_any.sql
+│   ├── 20260914150100_enable_realtime.sql
+│   ├── 20260914150200_evenements_delete_co.sql
+│   ├── 20260914150300_clean_test_data.sql
+│   ├── 20260914150400_security_hardening.sql
+│   ├── 20260914150500_fix_rls_event_terminate.sql
+│   ├── 20260914150600_allow_fraternity_change.sql
+│   └── 20260914150700_fix_audit_trigger.sql
+├── seed-comptes.sql                 ← attribution des rôles — à exécuter UNE fois
+├── clean_test_data_manual.sql       ← remise à zéro (SQL Editor)
+├── fix_rls_manual.sql               ← is_co bivalent + clôture événement
+├── fix_fraternite_manual.sql        ← changer_fraternite tout rôle
+└── fix_audit_trigger_manual.sql     ← audit jsonb (prioritaire)
 ```
 
 ## Contenu du schéma
@@ -13,9 +25,37 @@ supabase/
 | Objet | Détail |
 | --- | --- |
 | 14 tables | `grades`, `profiles`, `fraternites`, `lecteurs`, `lecteur_grades`, `presences`, `cotisations`, `app_settings`, `evenements`, `evenement_participants`, `evenement_paiements`, `caisse_operations`, `appreciations`, `logs` |
-| 41 politiques RLS | droits par rôle (`is_admin()`, `is_co()`, `is_caissier()`), gel des présences passées, clôture des événements |
-| Triggers | matricule automatique `LEC100…`, historique de grade, plafond des tranches de paiement, `updated_at`, journal d'audit sur 10 tables |
-| Fonctions sensibles | `changer_grade()` (Admin + CO), `log_action()` (tout compte connecté), `set_role()` (**SQL Editor uniquement**) |
+| Politiques RLS | droits par rôle (`is_admin()`, `is_co()`, `is_caissier()`), gel des présences passées, clôture des événements (WITH CHECK), suppression fraternité vide, `lecteurs_update_fraternite` |
+| Triggers | matricule automatique `LEC100…`, historique de grade, plafond des tranches de paiement, `updated_at`, `check_lecteur_update`, journal d'audit sur 10 tables |
+| Fonctions sensibles | `changer_grade()` (Admin + CO), `changer_fraternite()` (tout connecté), `log_action()` (tout compte connecté), `set_role()` (**SQL Editor uniquement**) |
+| Realtime | publication `supabase_realtime` : `presences`, `cotisations`, `lecteurs`, `fraternites` (`replica identity full`) |
+
+## Migrations (ordre chronologique)
+
+Une migration **déjà appliquée ne se modifie jamais**. On ajoute un nouveau fichier `AAAAMMJJHHMMSS_description.sql`.
+
+| Fichier | Rôle |
+| --- | --- |
+| `20260913000000_initial_schema.sql` | Schéma initial (14 tables, RLS, triggers, fonctions). Idempotent. |
+| `20260914150000_fraternites_delete_any.sql` | `fraternites_delete` ouvert à tout authentifié (fraternité vide : la FK bloque sinon). |
+| `20260914150100_enable_realtime.sql` | Ajoute les 4 tables à `supabase_realtime` + `replica identity full`. |
+| `20260914150200_evenements_delete_co.sql` | Contrainte `profiles_role_check` élargie (`co_paroissial`) ; `is_co()` bivalent ; `evenements_delete` Admin/CO. `DROP CONSTRAINT IF EXISTS` : rejouable. |
+| `20260914150300_clean_test_data.sql` | Remise à zéro livraison (voir README racine §13). Conserve `profiles`, `grades`, `app_settings`. |
+| `20260914150400_security_hardening.sql` | RLS forcé partout, `evenements_montant_check`, `profiles_username_not_empty`. |
+| `20260914150500_fix_rls_event_terminate.sql` | `is_co()` bivalent ; `evenements_update` **WITH CHECK** (le CO peut clôturer `en_cours → termine`) ; `fraternites_delete` réaffirmé. |
+| `20260914150600_allow_fraternity_change.sql` | `changer_fraternite(uuid, uuid)` SECURITY DEFINER + trigger `check_lecteur_update` + policy `lecteurs_update_fraternite`. |
+| `20260914150700_fix_audit_trigger.sql` | `audit_trigger()` lit les colonnes via `to_jsonb()`. **Sans ce correctif, aucun INSERT ne passe** (`record "new" has no field "matricule"`). |
+
+### Correctifs manuels (SQL Editor)
+
+Si l'intégration GitHub n'a pas encore appliqué les migrations, coller ces scripts **idempotents** (contenu identique) :
+
+| Script | Quand |
+| --- | --- |
+| `fix_audit_trigger_manual.sql` | **En priorité** — équivalent `14150700`. |
+| `fix_rls_manual.sql` | Équivalent `14150200` (contrainte de rôle) + `14150500`. |
+| `fix_fraternite_manual.sql` | Équivalent `14150600`. |
+| `clean_test_data_manual.sql` | Remise à zéro, **une seule fois**. |
 
 ## Synchronisation GitHub ↔ Supabase (intégration Git)
 
@@ -34,9 +74,8 @@ Règles :
   nouvelle migration (ex. `20260920120000_nouvelle_colonne.sql`).
 - Les **données** (lecteurs, présences, cotisations…) ne sont JAMAIS
   synchronisées — elles vivent dans Supabase. Seul le **schéma** suit le repo.
-- `seed-comptes.sql` **n'est pas** dans `migrations/` : ce n'est pas une migration.
-  Il s'exécute manuellement dans le SQL Editor, une seule fois, car il appelle
-  `public.set_role()` — fonction volontairement retirée aux comptes de l'application.
+- `seed-comptes.sql` et les `*_manual.sql` **ne sont pas** dans `migrations/` :
+  ce ne sont pas des migrations. Ils s'exécutent manuellement dans le SQL Editor.
 
 ## Créer les comptes de l'application
 
@@ -53,7 +92,7 @@ Variante pour un compte isolé :
 
 ```sql
 select public.set_role('UUID-DU-COMPTE', 'caissier', 'Nom Prénom');
--- rôles possibles : admin | co | caissier | responsable
+-- rôles possibles : admin | co | co_paroissial | caissier | responsable
 ```
 
 ## Ajouter une évolution de base de données
