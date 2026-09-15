@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  app:
+    name: Typage, logique métier et build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # `npm run verif` exécute directement du TypeScript via le « type
+      # stripping » natif de Node : non disponible avant 22.18 / 23.6.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18.0'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typage TypeScript
+        run: npx tsc --noEmit
+
+      - name: Logique métier (scripts/verif.ts importe le vrai src/lib)
+        run: npm run verif
+
+      - name: Build de production
+        run: npm run build
+
+  sql:
+    name: Syntaxe des migrations SQL
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Installer le parseur PostgreSQL (libpg_query)
+        run: pip install pglast
+
+      # Un fichier SQL invalide bloque toute la chaîne de migration : mieux
+      # vaut le savoir avant le push sur main, qui déclenche l'application
+      # automatique côté Supabase.
+      - name: Vérifier chaque fichier SQL
+        run: |
+          set -e
+          for f in supabase/migrations/*.sql supabase/*_manual.sql supabase/seed-comptes.sql; do
+            python -c "import pglast,sys; pglast.parse_sql(open(sys.argv[1]).read()); print('OK   '+sys.argv[1])" "$f"
+          done

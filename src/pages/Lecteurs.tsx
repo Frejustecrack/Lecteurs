@@ -10,7 +10,13 @@ import {
   bornesAnneeNaissance,
   validerAnneesLecteur,
 } from '../lib/validation';
-import type { Fraternite, Grade, Lecteur } from '../lib/types';
+import {
+  estAdmin,
+  peutGererLecteurs,
+  type Fraternite,
+  type Grade,
+  type Lecteur,
+} from '../lib/types';
 import {
   Badge,
   BtnGhost,
@@ -50,8 +56,8 @@ const FORM_VIDE: FormLecteur = {
 
 export default function Lecteurs() {
   const { profile } = useAuth();
-  const canEdit = profile?.role === 'admin' || profile?.role === 'co';
-  const isAdmin = profile?.role === 'admin';
+  const canEdit = peutGererLecteurs(profile?.role);
+  const isAdmin = estAdmin(profile?.role);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -84,6 +90,29 @@ export default function Lecteurs() {
 
   useEffect(() => {
     load();
+  }, [load]);
+
+  /**
+   * Temps réel : un lecteur créé ou rattaché à une fraternité ailleurs
+   * apparaît ici sans rechargement.
+   */
+  useEffect(() => {
+    const channel = supabase
+      .channel('realtime-lecteurs')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lecteurs' }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'fraternites' }, () => load())
+      .subscribe();
+    const onFocus = () => load();
+    const onVis = () => {
+      if (document.visibilityState === 'visible') load();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVis);
+      supabase.removeChannel(channel);
+    };
   }, [load]);
 
   const filtered = useMemo(() => {

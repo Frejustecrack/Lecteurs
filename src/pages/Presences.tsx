@@ -18,7 +18,12 @@ import {
   semaineLabel,
 } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
-import type { Fraternite, Lecteur, Presence } from '../lib/types';
+import {
+  peutExporter as rolePeutExporter,
+  type Fraternite,
+  type Lecteur,
+  type Presence,
+} from '../lib/types';
 import {
   BtnGhost,
   EmptyState,
@@ -217,10 +222,7 @@ export default function Presences() {
 
   if (loading) return <Spinner label="Chargement des présences…" />;
 
-  const peutExporter =
-    profile?.role === 'admin' ||
-    profile?.role === 'co' ||
-    profile?.role === 'caissier';
+  const peutExporter = rolePeutExporter(profile?.role);
 
   return (
     <div>

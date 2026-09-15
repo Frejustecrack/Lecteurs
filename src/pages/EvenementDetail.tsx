@@ -4,11 +4,13 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { fmtDate, fmtDateHeure, fmtMoney, pct } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
-import type {
-  CaisseOperation,
-  Evenement,
-  EvenementPaiement,
-  Lecteur,
+import {
+  estAdmin,
+  estCO,
+  type CaisseOperation,
+  type Evenement,
+  type EvenementPaiement,
+  type Lecteur,
 } from '../lib/types';
 import {
   Badge,
@@ -40,8 +42,8 @@ export default function EvenementDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { profile } = useAuth();
-  const isCO = profile?.role === 'co' || profile?.role === 'co_paroissial';
-  const isAdmin = profile?.role === 'admin';
+  const isCO = estCO(profile?.role);
+  const isAdmin = estAdmin(profile?.role);
   const { toast } = useToast();
 
   const [e, setE] = useState<Evenement | null>(null);
@@ -106,6 +108,33 @@ export default function EvenementDetail() {
   useEffect(() => {
     load();
   }, [load]);
+
+  /**
+   * Temps réel : deux Chargés des Opérations peuvent encaisser sur le même
+   * événement en même temps — chaque tranche, inscription ou opération de
+   * caisse arrive ici sans rechargement.
+   * (Tables publiées par la migration 20260915180000.)
+   */
+  useEffect(() => {
+    const channel = supabase
+      .channel(`realtime-evenement-${id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'evenement_participants' }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'evenement_paiements' }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'caisse_operations' }, () => load())
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'evenements' }, () => load())
+      .subscribe();
+    const onFocus = () => load();
+    const onVis = () => {
+      if (document.visibilityState === 'visible') load();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVis);
+      supabase.removeChannel(channel);
+    };
+  }, [load, id]);
 
   /** Paiements et opérations triés du plus récent au plus ancien. */
   const paiementsTri = useMemo(

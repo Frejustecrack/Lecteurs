@@ -13,16 +13,18 @@ import {
   samediEstArrive,
   samedisDuMois,
 } from '../lib/dates';
-import type {
-  Appreciation,
-  Cotisation,
-  Evenement,
-  Grade,
-  Lecteur,
-  LecteurGrade,
-  NatureAppreciation,
-  Presence,
-  Profile,
+import {
+  estAdmin,
+  peutGererLecteurs,
+  type Appreciation,
+  type Cotisation,
+  type Evenement,
+  type Grade,
+  type Lecteur,
+  type LecteurGrade,
+  type NatureAppreciation,
+  type Presence,
+  type Profile,
 } from '../lib/types';
 import {
   Badge,
@@ -90,8 +92,8 @@ export default function LecteurProfil() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { profile } = useAuth();
-  const canEdit = profile?.role === 'admin' || profile?.role === 'co';
-  const isAdmin = profile?.role === 'admin';
+  const canEdit = peutGererLecteurs(profile?.role);
+  const isAdmin = estAdmin(profile?.role);
   const { toast } = useToast();
 
   const [l, setL] = useState<Lecteur | null>(null);

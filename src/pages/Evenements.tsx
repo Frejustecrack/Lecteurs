@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { fmtDate, fmtMoney } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
-import type { Evenement } from '../lib/types';
+import { estAdmin, estCO, type Evenement } from '../lib/types';
 import {
   Badge,
   BtnGhost,
@@ -21,8 +21,8 @@ import {
 
 export default function Evenements() {
   const { profile } = useAuth();
-  const isCO = profile?.role === 'co' || profile?.role === 'co_paroissial';
-  const isAdmin = profile?.role === 'admin';
+  const isCO = estCO(profile?.role);
+  const isAdmin = estAdmin(profile?.role);
   const canManage = isCO || isAdmin;
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -60,6 +60,30 @@ export default function Evenements() {
 
   useEffect(() => {
     load();
+  }, [load]);
+
+  /**
+   * Temps réel : un événement créé, modifié, supprimé ou dont les inscrits
+   * changent ailleurs est reflété ici sans rechargement manuel.
+   * (Tables publiées par la migration 20260915180000.)
+   */
+  useEffect(() => {
+    const channel = supabase
+      .channel('realtime-evenements')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'evenements' }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'evenement_participants' }, () => load())
+      .subscribe();
+    const onFocus = () => load();
+    const onVis = () => {
+      if (document.visibilityState === 'visible') load();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVis);
+      supabase.removeChannel(channel);
+    };
   }, [load]);
 
   function openCreate() {

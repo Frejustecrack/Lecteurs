@@ -10,7 +10,15 @@ import {
   moisLabel,
 } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
-import type { CaisseOperation, Cotisation, Lecteur, Profile } from '../lib/types';
+import {
+  estAdmin,
+  estCO,
+  peutExporter as rolePeutExporter,
+  type CaisseOperation,
+  type Cotisation,
+  type Lecteur,
+  type Profile,
+} from '../lib/types';
 import {
   Badge,
   BtnGhost,
@@ -38,11 +46,12 @@ const COLONNES_COT = 'lecteur_id, date_samedi, montant, paid_at, recorded_by';
 
 export default function Caisse() {
   const { profile } = useAuth();
-  const isCO = profile?.role === 'co';
-  const isAdmin = profile?.role === 'admin';
+  // `estCO` couvre `co` ET `co_paroissial`, comme `public.is_co()` en base.
+  const isCO = estCO(profile?.role);
+  const isAdmin = estAdmin(profile?.role);
   // Cahier des charges §17 : l'état de caisse est exportable par
   // Admin, CO et Caissiers uniquement (les Responsables consultent sans exporter).
-  const canExport = isAdmin || isCO || profile?.role === 'caissier';
+  const canExport = rolePeutExporter(profile?.role);
   const { toast } = useToast();
 
   const now = new Date();
@@ -98,6 +107,31 @@ export default function Caisse() {
   useEffect(() => {
     setLoading(true);
     load().finally(() => setLoading(false));
+  }, [load]);
+
+  /**
+   * Temps réel : une cotisation encaissée par le Caissier ou une opération
+   * saisie par le Chargé des Opérations met à jour le solde général ici même,
+   * sans rechargement.
+   * (`caisse_operations` est publiée par la migration 20260915180000.)
+   */
+  useEffect(() => {
+    const channel = supabase
+      .channel('realtime-caisse')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cotisations' }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'caisse_operations' }, () => load())
+      .subscribe();
+    const onFocus = () => load();
+    const onVis = () => {
+      if (document.visibilityState === 'visible') load();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVis);
+      supabase.removeChannel(channel);
+    };
   }, [load]);
 
   const matriculeDe = (lid: string) =>
