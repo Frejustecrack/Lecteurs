@@ -208,7 +208,7 @@ export default function Layout() {
           </div>
         )}
 
-        <main className="mx-auto w-full max-w-6xl flex-1 p-4 sm:p-6">
+        <main className="cdlj-main mx-auto w-full max-w-6xl flex-1 p-4 sm:p-6">
           <div className="animate-[cdlj-modal-in_220ms_ease-out]">
             <Outlet />
           </div>
