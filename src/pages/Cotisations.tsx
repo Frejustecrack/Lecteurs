@@ -17,7 +17,13 @@ import {
   semaineLabel,
 } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
-import type { Cotisation, Fraternite, Lecteur } from '../lib/types';
+import {
+  estCaissier,
+  peutExporter as rolePeutExporter,
+  type Cotisation,
+  type Fraternite,
+  type Lecteur,
+} from '../lib/types';
 import {
   BtnGhost,
   EmptyState,
@@ -37,7 +43,7 @@ type ModeVue = 'mois' | 'semaine';
 
 export default function Cotisations() {
   const { profile } = useAuth();
-  const isCaissier = profile?.role === 'caissier';
+  const isCaissier = estCaissier(profile?.role);
   const { toast } = useToast();
 
   const now = new Date();
@@ -233,8 +239,7 @@ export default function Cotisations() {
 
   if (loading) return <Spinner label="Chargement des cotisations…" />;
 
-  const peutExporter =
-    profile?.role === 'admin' || profile?.role === 'co' || isCaissier;
+  const peutExporter = rolePeutExporter(profile?.role);
 
   return (
     <div>

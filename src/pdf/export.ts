@@ -20,6 +20,7 @@ import type {
   LecteurGrade,
   Presence,
 } from '../lib/types';
+import { absencesEffectives, type Recap } from '../lib/recap';
 import { LOGO_CDLJ_BASE64, SAINTE_FAMILLE_BASE64 } from './headerAssets';
 
 const BLEU_CDLJ: [number, number, number] = [26, 86, 219];
@@ -677,4 +678,89 @@ export function exportListeLecteurs(args: {
   piedPage(doc);
   const horodatage = new Date().toISOString().slice(0, 10);
   sauvegarderPdf(doc, `cdlj_liste_lecteurs_${statut}_${horodatage}.pdf`);
+}
+
+// ------------------------------------------------------------------
+// 7. Récapitulatif d'assiduité (module « Suivis »)
+//    Les totaux reprennent la logique pure de `lib/recap.ts` : un samedi
+//    arrivé mais non pointé compte comme une absence (« à preuve du
+//    contraire »), un samedi à venir n'est jamais comptabilisé.
+// ------------------------------------------------------------------
+export function exportSuivis(args: {
+  periode: string;
+  /** Samedis réellement comptés (déjà filtrés sur les samedis arrivés). */
+  samedis: string[];
+  recaps: Recap[];
+  fraterniteNom: (id: string | null) => string | null;
+  /** Filtres actifs, pour que le document dise ce qu'il contient. */
+  contexte?: string;
+  auteur: string;
+}) {
+  const { periode, samedis, recaps, fraterniteNom, contexte, auteur } = args;
+  const doc = new jsPDF();
+  const y = entete(doc, "Récapitulatif d'assiduité", periode, auteur);
+
+  const nb = samedis.length;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(51, 65, 85);
+  doc.text(
+    `${nb} séance${nb > 1 ? 's' : ''} comptée${nb > 1 ? 's' : ''}${
+      nb > 0 ? ' : ' + samedis.map((s) => fmtDate(s)).join('  •  ') : ''
+    }`,
+    14,
+    y
+  );
+  let suite = y;
+  if (contexte) {
+    doc.text(contexte, 14, y + 5);
+    suite = y + 5;
+  }
+
+  const head = [
+    ['Matricule', 'Nom', 'Prénom', 'Fraternité', 'Présences', 'Absences', 'Non pointé', 'Taux'],
+  ];
+  const body = recaps.map((r) => [
+    r.lecteur.matricule,
+    r.lecteur.nom.toUpperCase(),
+    r.lecteur.prenom,
+    fraterniteNom(r.lecteur.fraternite_id) ?? '—',
+    String(r.present),
+    String(absencesEffectives(r)),
+    r.nonSaisi > 0 ? String(r.nonSaisi) : '—',
+    `${r.taux} %`,
+  ]);
+
+  table(doc, { startY: suite + 5, head, body });
+  const finY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
+
+  const nbAssidus = recaps.filter((r) => r.total > 0 && r.present === r.total).length;
+  const nbAbsents = recaps.filter((r) => absencesEffectives(r) > 0).length;
+  const tauxMoyen =
+    recaps.length > 0
+      ? Math.round(recaps.reduce((s, r) => s + r.taux, 0) / recaps.length)
+      : 0;
+
+  doc.setFontSize(9.5);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text(
+    `Lecteurs : ${recaps.length}   •   Assidus : ${nbAssidus}   •   Ayant été absents : ${nbAbsents}   •   Taux moyen : ${tauxMoyen} %`,
+    14,
+    finY
+  );
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(100, 116, 139);
+  doc.text(
+    "Un samedi arrivé mais non pointé compte comme une absence ; les samedis à venir ne sont pas comptabilisés.",
+    14,
+    finY + 6
+  );
+
+  piedPage(doc);
+  sauvegarderPdf(
+    doc,
+    `cdlj_suivis_${periode.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '')}.pdf`
+  );
 }

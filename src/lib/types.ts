@@ -139,3 +139,40 @@ export const ROLE_LABELS: Record<Role, string> = {
   caissier: 'Caissier',
   responsable: 'Responsable',
 };
+
+// ---------------------------------------------------------------------------
+// Helpers de rôle — à utiliser PARTOUT à la place des comparaisons littérales.
+//
+// `co_paroissial` est un alias strict de `co` : la base les traite de la même
+// façon (`public.is_co()` renvoie vrai pour les deux, migration 20260914150500).
+// L'interface doit faire exactement pareil, sinon un CO paroissial a le droit
+// en base mais ne voit pas les boutons correspondants.
+// ---------------------------------------------------------------------------
+
+/** Administrateur. */
+export function estAdmin(role: Role | null | undefined): boolean {
+  return role === 'admin';
+}
+
+/** Chargé des Opérations — `co` ou son alias `co_paroissial`. */
+export function estCO(role: Role | null | undefined): boolean {
+  return role === 'co' || role === 'co_paroissial';
+}
+
+/** Caissier (saisie des cotisations). */
+export function estCaissier(role: Role | null | undefined): boolean {
+  return role === 'caissier';
+}
+
+/**
+ * Export PDF — cahier des charges §17 : Admin, Chargé des Opérations et
+ * Caissiers (les Responsables consultent sans exporter).
+ */
+export function peutExporter(role: Role | null | undefined): boolean {
+  return estAdmin(role) || estCO(role) || estCaissier(role);
+}
+
+/** Modification des fiches lecteurs : Admin et Chargé des Opérations. */
+export function peutGererLecteurs(role: Role | null | undefined): boolean {
+  return estAdmin(role) || estCO(role);
+}

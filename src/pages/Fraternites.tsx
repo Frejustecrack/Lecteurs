@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { traduireErreur } from '../lib/errors';
-import type { Fraternite, Lecteur } from '../lib/types';
+import { peutGererLecteurs, type Fraternite, type Lecteur } from '../lib/types';
 import {
   Badge,
   BtnGhost,
@@ -20,7 +20,7 @@ import {
 
 export default function Fraternites() {
   const { profile } = useAuth();
-  const canEdit = profile?.role === 'admin' || profile?.role === 'co';
+  const canEdit = peutGererLecteurs(profile?.role);
   const canDelete = !!profile?.role; // tout utilisateur connecté peut supprimer une fraternité vide
   const navigate = useNavigate();
   const { toast } = useToast();

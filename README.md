@@ -56,7 +56,11 @@ npm run dev            # http://localhost:5173
 
 ## 2. Prérequis
 
-- **Node.js 20+** ( `npm run verif` utilise le stripping TypeScript natif de Node, pas de `ts-node` )
+- **Node.js 22.18+** — `npm run verif` exécute directement le TypeScript grâce au
+  *type stripping* natif de Node (pas de `ts-node`). Ce mode n'est actif sans
+  drapeau qu'à partir de **22.18** (ou 23.6) : sur un Node 20, `npm run dev` et
+  `npm run build` fonctionnent mais `npm run verif` échoue. `package.json`
+  déclare `"engines": { "node": ">=22.18" }`.
 - Un projet **Supabase** (gratuit suffit)
 - Compte **Cloudflare** si vous déployez le front
 
@@ -95,6 +99,11 @@ Le schéma vit dans [`supabase/migrations/`](supabase/migrations) — **versionn
 | `20260914150600_allow_fraternity_change.sql` | `changer_fraternite()` tout rôle + trigger `check_lecteur_update` + policy `lecteurs_update_fraternite` |
 | `20260914150700_fix_audit_trigger.sql` | `audit_trigger()` via `to_jsonb()` — plus de référence à `new.matricule` (bug qui bloquait **tous** les INSERT) |
 | `20260915120000_rename_grades_animation.sql` | Renommage des grades 5 et 6 (« Animation Grand I/II » → « Animation I/II ») |
+| `20260915180000_realtime_caisse_evenements.sql` | Publie `caisse_operations`, `evenements`, `evenement_participants` et `evenement_paiements` dans `supabase_realtime` (le Dashboard écoutait `caisse_operations` sans qu'elle soit publiée) |
+
+> Le commentaire d'en-tête de `20260913000000_initial_schema.sql` annonce « 13 tables » ;
+> le fichier en crée **14**. La migration étant déjà appliquée en production, elle n'est
+> volontairement **pas** modifiée (règle d'or ci-dessous) — la correction est portée ici.
 
 Si l'intégration Git n'a pas encore appliqué ces migrations, coller dans le **SQL Editor** (idempotents, contenu identique) :
 
@@ -104,6 +113,7 @@ Si l'intégration Git n'a pas encore appliqué ces migrations, coller dans le **
 | [`supabase/fix_rls_manual.sql`](supabase/fix_rls_manual.sql) | `14150200` (contrainte de rôle) + `14150500` |
 | [`supabase/fix_fraternite_manual.sql`](supabase/fix_fraternite_manual.sql) | `14150600` |
 | [`supabase/rename_grades_animation_manual.sql`](supabase/rename_grades_animation_manual.sql) | `15120000` (renommage grades) |
+| [`supabase/realtime_caisse_evenements_manual.sql`](supabase/realtime_caisse_evenements_manual.sql) | `15180000` (temps réel caisse + événements) |
 
 **Synchronisation GitHub → Supabase (intégration officielle) :**
 Dashboard Supabase → **Settings → Integrations → GitHub** → Connecter `Frejustecrack/Lecteurs` sur la branche `main`. Chaque nouveau fichier `supabase/migrations/*.sql` poussé sur `main` est appliqué automatiquement.
@@ -139,7 +149,13 @@ python3 -c "import pglast,sys; pglast.parse_sql(open(sys.argv[1]).read()); print
 | Exporter PDF présences/cotisations/caisse | ✅ | ✅ | ✅ | — |
 | Exporter bilan événement / fiche lecteur | ✅ | ✅ | — | — |
 
-Le **CO paroissial** (`co` ou `co_paroissial`) a les mêmes droits que `co` — le helper `is_co()` accepte les deux libellés, la contrainte DB les autorise, et le RLS `evenements_delete` l'autorise.
+Le **CO paroissial** (`co` ou `co_paroissial`) a les mêmes droits que `co`, **en base et dans l'interface** :
+
+- côté base, `public.is_co()` renvoie vrai pour les deux libellés et la contrainte `profiles_role_check` les autorise ;
+- côté interface, toutes les pages passent par les helpers de [`src/lib/types.ts`](src/lib/types.ts) — `estCO()`, `estAdmin()`, `estCaissier()`, `peutExporter()`, `peutGererLecteurs()` — et jamais par une comparaison littérale `role === 'co'`.
+
+> Ne pas réintroduire de `profile?.role === 'co'` dans une page : un CO paroissial
+> aurait le droit en base mais ne verrait pas les boutons correspondants.
 
 ### 5.2 Créer les comptes
 
@@ -169,7 +185,7 @@ Recommandé : **Authentication → Settings** → désactiver *Enable email sign
 | **Lecteurs** | `/lecteurs`, `/lecteurs/:id` | Matricule auto `LEC100…` jamais réattribué, archivage (pas de delete), **changement de fraternité par tout rôle** (`changer_fraternite()`, carte dédiée + temps réel), changement de grade historisé via `changer_grade()`, appréciations soft-delete, export fiche PDF. |
 | **Fraternités** | `/fraternites` | Nom + responsables (simples noms). Création par tous, renommage admin/co, **suppression par tout rôle si vide** (FK bloque si des lecteurs y sont encore). Temps réel. |
 | **Présences** | `/presences` | **Vue mensuelle** (3-5 samedis, `overflow-x`) ou **hebdomadaire** (1 samedi, **cartes sur mobile sans scroll**, tableau compact sur desktop). Légende en **chips** aux couleurs des cellules (vert / rouge / gris pointillé). Gel automatique des samedis passés (RLS `dernier_samedi()`), correction Admin tracée. |
-| **Suivis** | `/suivis` | Récap `present/absent/nonSaisi/taux` via `src/lib/recap.ts`. Filtres *absents / assidus / saisie incomplète*, filtre samedi précis, fraternité, recherche, tri colonnes. Cartes sur mobile, tableau sur desktop. |
+| **Suivis** | `/suivis` | Récap `present/absent/nonSaisi/taux` via `src/lib/recap.ts`. Filtres *absents / assidus / saisie incomplète*, filtre samedi précis, fraternité, recherche, tri colonnes. Cartes sur mobile, tableau sur desktop. **Export PDF du récapitulatif tel qu'affiché** (mêmes samedis comptés, mêmes filtres, même tri), tracé via `log_action('export.pdf')`. |
 | **Cotisations** | `/cotisations` | 50 F / samedi / lecteur (paramétrable dans `app_settings`). Vue mensuelle/hebdo (même UX que Présences). Saisie **Caissier uniquement**, pas de gel, mois passés modifiables. |
 | **Événements** | `/evenements`, `/evenements/:id` | Création par CO, inscription par matricule, paiements en tranches (trigger `check_tranche` : total ≤ participation), **suppression par CO/Admin** (cascade participants/paiements/caisse + log `evenement.suppression`), **clôture CO** `en_cours→termine` (policy `evenements_update` WITH CHECK) + réouverture Admin. |
 | **Caisse** | `/caisse` | Caisse générale = cotisations payées + encaissements − décaissements (`event_id IS NULL`). Opérations CO uniquement. Export PDF. |
@@ -177,7 +193,7 @@ Recommandé : **Authentication → Settings** → désactiver *Enable email sign
 
 **Règle “à preuve du contraire” :** un samedi **arrivé** non pointé = **rouge** = absence (ou cotisation due). Un samedi **à venir** = neutre = non comptabilisé. Les samedis à venir n'entrent dans aucun total (KPIs, graphiques, Suivis).
 
-Six exports PDF côté client (`src/pdf/export.ts` + `jspdf`/`jspdf-autotable`) : présences, cotisations, bilan événement, état de caisse, fiche lecteur, liste des lecteurs. Tous les documents partagent **l'en-tête officiel CDLJ** (reproduction conforme de `Document 1.pdf` avec logo CDLJ, image Sainte Famille, mention vicariale/archidiocèse, bandeau doré `#ffd966` et pied de page officiel). L'en-tête et les tableaux s'adaptent dynamiquement à l'orientation (portrait / paysage) et au terminal (téléphone mobile / tablette / ordinateur). Chaque export est tracé via `log_action('export.pdf')`.
+Sept exports PDF côté client (`src/pdf/export.ts` + `jspdf`/`jspdf-autotable`) : présences, cotisations, bilan événement, état de caisse, fiche lecteur, liste des lecteurs, récapitulatif d'assiduité (Suivis). Tous les documents partagent **l'en-tête officiel CDLJ** (reproduction conforme de `Document 1.pdf` avec logo CDLJ, image Sainte Famille, mention vicariale/archidiocèse, bandeau doré `#ffd966` et pied de page officiel). L'en-tête et les tableaux s'adaptent dynamiquement à l'orientation (portrait / paysage) et au terminal (téléphone mobile / tablette / ordinateur). Chaque export est tracé via `log_action('export.pdf')`.
 
 ## 7. Règles métier structurantes
 
@@ -195,15 +211,20 @@ Six exports PDF côté client (`src/pdf/export.ts` + `jspdf`/`jspdf-autotable`) 
 ## 8. Organisation du code
 
 ```
+public/                  fichiers servis tels quels à la racine du site
+├─ _redirects            /* /index.html 200 — SPA Cloudflare Pages (deep links)
+├─ favicon.svg           icône d'onglet (monogramme CDLJ)
+└─ logo-cdlj.jpg         logo officiel 260×260 (repli + apple-touch-icon)
+
 src/
 ├─ App.tsx               routes + RequireAuth / RequireAdmin + ConfigManquante
 ├─ main.tsx              React 19 createRoot
-├─ index.css             Tailwind 4 theme (cdlj, alerte, fond) + animations
+├─ index.css             Tailwind 4 theme (cdlj, alerte, fond), animations, .cdlj-actions
 ├─ assets/               fond-connexion.jpg (optionnel)
 ├─ context/AuthContext   session Supabase + profile (rôle) + refresh
 ├─ lib/
 │  ├─ supabase.ts        createClient (autoRefresh, persistSession)
-│  ├─ types.ts           miroir des tables + ROLE_LABELS
+│  ├─ types.ts           miroir des tables, ROLE_LABELS + helpers estAdmin/estCO/estCaissier/peutExporter/peutGererLecteurs
 │  ├─ dates.ts           samedisDuMois, samedisSemaine, dernierSamedi, estGelee, samediEstArrive, fmt…
 │  ├─ recap.ts           calculerRecaps, absencesEffectives, filtre/tri (testé à 91)
 │  ├─ errors.ts          traduireErreur (jamais de code technique à l'utilisateur)
@@ -211,10 +232,10 @@ src/
 ├─ components/
 │  ├─ Layout.tsx         sidebar + drawer mobile + changement mot de passe
 │  ├─ ErrorBoundary.tsx
-│  └─ ui.tsx             Btn*, Badge, StatCard, Modal, Field, Segmented, EyeToggle, StepNav…
-├─ pages/                10 pages, une par module
+│  └─ ui.tsx             Btn* (dont BtnDangerGhost), Badge, StatCard, Modal, Field, Segmented, EyeToggle, StepNav…
+├─ pages/                12 pages, une par module
 └─ pdf/
-   ├─ export.ts          jsPDF + autoTable (6 exports, adaptatifs portrait/paysage)
+   ├─ export.ts          jsPDF + autoTable (7 exports, adaptatifs portrait/paysage)
    └─ headerAssets.ts    logos officiels base64 (CDLJ + Sainte Famille)
 
 supabase/
@@ -225,9 +246,11 @@ supabase/
 ├─ fix_fraternite_manual.sql       changer_fraternite (SQL Editor)
 ├─ fix_audit_trigger_manual.sql    audit jsonb (SQL Editor)
 ├─ rename_grades_animation_manual.sql renommage grades Animation I/II (SQL Editor)
+├─ realtime_caisse_evenements_manual.sql temps réel caisse + événements (SQL Editor)
 └─ README.md             détail migrations
 
 scripts/verif.ts         91 vérifications logiques pures (sans DB)
+.github/workflows/ci.yml typage + logique + build + syntaxe SQL à chaque PR
 ```
 
 ## 9. UI/UX
@@ -264,14 +287,24 @@ supabase.channel('realtime-presences')
 
 | Page | Tables écoutées |
 |---|---|
-| Dashboard | `presences`, `cotisations`, `lecteurs` |
-| Présences | `presences` |
-| Cotisations | `cotisations` |
-| Suivis | `presences`, `lecteurs` |
+| Dashboard | `presences`, `cotisations`, `lecteurs`, `caisse_operations` |
+| Lecteurs | `lecteurs`, `fraternites` |
 | Fraternités | `fraternites`, `lecteurs` |
+| Présences | `presences` |
+| Suivis | `presences`, `lecteurs` |
+| Cotisations | `cotisations` |
+| Événements | `evenements`, `evenement_participants` |
+| Fiche événement | `evenement_participants`, `evenement_paiements`, `caisse_operations` + `UPDATE` sur `evenements` |
+| Caisse | `cotisations`, `caisse_operations` |
 | Fiche lecteur | `presences` / `cotisations` filtrés + `UPDATE` sur `lecteurs` (changement de fraternité ailleurs) |
 
-+ `window focus` / `visibilitychange` → refetch si l'onglet revient. Une modification de présence ou de fraternité est visible **partout** (Dashboard KPIs, Suivis, fiche lecteur) sans F5, même si deux utilisateurs pointent en même temps.
+Les 8 tables publiées dans `supabase_realtime` sont : `presences`, `cotisations`, `fraternites`, `lecteurs` (migration `20260914150100`) puis `caisse_operations`, `evenements`, `evenement_participants`, `evenement_paiements` (migration `20260915180000`). Une table **non publiée** ne déclenche aucun événement : c'était le cas de `caisse_operations`, écoutée par le Dashboard sans effet.
+
+> La diffusion reste filtrée par RLS côté Supabase : publier une table n'élargit
+> aucun droit de lecture, elle rend simplement ses changements visibles de ceux
+> qui pouvaient déjà la lire.
+
++ `window focus` / `visibilitychange` → refetch si l'onglet revient. Une modification est visible **partout** (Dashboard KPIs, Suivis, fiche lecteur, caisse, événements) sans F5, même si deux utilisateurs travaillent en même temps.
 
 ## 12. Déploiement
 
@@ -284,7 +317,8 @@ supabase.channel('realtime-presences')
   VITE_SUPABASE_URL=...
   VITE_SUPABASE_PUBLISHABLE_KEY=...
   ```
-- SPA : ajouter `public/_redirects` contenant `/* /index.html 200` (ou équivalent Cloudflare) pour que `/lecteurs/:id` ne 404 pas au refresh.
+- SPA : [`public/_redirects`](public/_redirects) contient déjà `/* /index.html 200`. Vite copie `public/` dans `dist/`, Cloudflare Pages le lit au déploiement : sans ce fichier, un rafraîchissement sur `/lecteurs/:id` ou `/evenements/:id` renvoie une 404.
+- Icônes : `public/favicon.svg` (navigateurs récents) et `public/logo-cdlj.jpg` (repli + `apple-touch-icon`) — référencés dans `index.html`, copiés tels quels dans `dist/`.
 
 **Supabase** : connecter le repo (Settings → Git) sur `main` pour que les migrations s'appliquent auto. Sinon exécuter les fichiers `supabase/migrations/*.sql` manuellement dans le SQL Editor, dans l'ordre chronologique.
 
@@ -312,12 +346,35 @@ Vérification : `select count(*) from public.lecteurs;` doit être 0, le prochai
 ## 14. Vérifications & qualité
 
 ```bash
-npm run verif   # 91 tests : samedis, gel, samedisArrives, validation années, erreurs, recap Suivis
-npm run build   # tsc --noEmit + vite build (échoue si une erreur de typage)
+npm run verif    # 91 tests : samedis, gel, samedisArrives, validation années, erreurs, recap Suivis
+npm run build    # tsc --noEmit + vite build (échoue si une erreur de typage)
 npx tsc --noEmit # typage seul
 ```
 
-Le script `scripts/verif.ts` importe le **vrai** code de `src/lib/` (pas une copie) — toute régression y fait échouer la CI.
+Le script `scripts/verif.ts` importe le **vrai** code de `src/lib/` (pas une copie) — toute régression y fait échouer la vérification.
+
+### Intégration continue
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) se déclenche sur chaque push vers `main` et sur chaque pull request. Deux jobs :
+
+| Job | Étapes |
+|---|---|
+| **app** | `npm ci` → `tsc --noEmit` → `npm run verif` → `npm run build` (Node 22.18, requis par le *type stripping*) |
+| **sql** | `pip install pglast` → parsing PostgreSQL de **tous** les fichiers `supabase/**/*.sql` |
+
+Le job **sql** existe parce qu'un fichier invalide bloque toute la chaîne : dès le push sur `main`, Supabase tente d'appliquer la migration. Mieux vaut le savoir avant.
+
+Vérifier la syntaxe SQL en local, sans attendre la CI :
+
+```bash
+pip install pglast
+python3 -c "import pglast,sys; pglast.parse_sql(open(sys.argv[1]).read()); print('OK')" \
+  supabase/migrations/20260915180000_realtime_caisse_evenements.sql
+```
+
+### Ce que la CI ne couvre pas
+
+Aucun test n'exécute les composants React ni le rendu : le typage et `verif.ts` ne voient pas une classe CSS cassée ni une incohérence de droits entre l'interface et le RLS. Avant de merger une modification d'interface, ouvrir la page concernée sur un téléphone (ou en responsive 375 px).
 
 ## 15. Dépannage
 

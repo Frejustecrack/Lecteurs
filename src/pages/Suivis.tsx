@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../context/AuthContext';
+import { traduireErreur } from '../lib/errors';
 import {
   dateISO,
   deplaceMois,
@@ -16,7 +18,7 @@ import {
   samedisSemaine,
   semaineLabel,
 } from '../lib/dates';
-import type { Fraternite, Lecteur, Presence } from '../lib/types';
+import { peutExporter as rolePeutExporter, type Fraternite, type Lecteur, type Presence } from '../lib/types';
 import {
   absencesEffectives,
   appliquerFiltreRecap,
@@ -28,6 +30,7 @@ import {
 } from '../lib/recap';
 import {
   Badge,
+  BtnGhost,
   EmptyState,
   iconPressCls,
   inputCls,
@@ -37,7 +40,9 @@ import {
   Spinner,
   StatCard,
   StepNav,
+  useToast,
 } from '../components/ui';
+import { exportSuivis } from '../pdf/export';
 
 /** Vue hebdomadaire (le samedi de la semaine) ou mensuelle (tous les samedis). */
 type ModeVue = 'semaine' | 'mois';
@@ -67,6 +72,11 @@ const FILTRES: { value: FiltreRecap; label: string; aide: string }[] = [
 
 export default function Suivis() {
   const now = new Date();
+  const { profile } = useAuth();
+  const { toast } = useToast();
+  // Cahier des charges §17 : Admin, Chargé des Opérations et Caissiers.
+  const peutExporter = rolePeutExporter(profile?.role);
+  const [busyPdf, setBusyPdf] = useState(false);
 
   // ---------------------------------------------------------------- état
   const [mode, setMode] = useState<ModeVue>('mois');
@@ -242,6 +252,49 @@ export default function Suivis() {
   const aideFiltre = FILTRES.find((f) => f.value === filtre)?.aide;
   const dernierSam = dateISO(dernierSamedi());
 
+  /**
+   * Export PDF du récapitulatif **tel qu'il est affiché** : mêmes samedis
+   * comptés, mêmes filtres, même tri. Chaque export est tracé.
+   */
+  async function exporterPdf() {
+    if (!peutExporter) {
+      toast("Vous n'êtes pas autorisé à exporter ce récapitulatif.", 'err');
+      return;
+    }
+    if (tries.length === 0) {
+      toast('Aucun lecteur à exporter avec les filtres actuels.', 'err');
+      return;
+    }
+    setBusyPdf(true);
+    try {
+      const morceaux = [
+        filtre !== 'tous' ? FILTRES.find((f) => f.value === filtre)?.label : null,
+        fId ? `Fraternité : ${fraterniteNom(fId) ?? '—'}` : null,
+        search.trim() ? `Recherche : « ${search.trim()} »` : null,
+        samediChoisi ? `Samedi ${fmtDate(samediChoisi)}` : null,
+      ].filter(Boolean);
+      await exportSuivis({
+        periode: periodeLabel,
+        samedis: samedisComptes,
+        recaps: tries,
+        fraterniteNom,
+        contexte: morceaux.length > 0 ? morceaux.join('   •   ') : undefined,
+        auteur: profile?.full_name ?? '—',
+      });
+      await supabase.rpc('log_action', {
+        p_action: 'export.pdf',
+        p_objet_type: 'suivis',
+        p_objet_ref: periodeLabel,
+        p_detail: JSON.stringify({ document: 'suivis', periode: periodeLabel }),
+      });
+      toast('Le récapitulatif PDF a été généré.');
+    } catch (err) {
+      toast(traduireErreur(err, 'générer le récapitulatif PDF'), 'err');
+    } finally {
+      setBusyPdf(false);
+    }
+  }
+
   if (loading) return <Spinner label="Chargement du suivi…" />;
 
   return (
@@ -249,6 +302,23 @@ export default function Suivis() {
       <PageHeader
         title="Suivis"
         sub="Récapitulatif des présences et des absences — vue hebdomadaire ou mensuelle"
+        actions={
+          peutExporter ? (
+            <BtnGhost
+              onClick={exporterPdf}
+              busy={busyPdf}
+              busyLabel="PDF…"
+              disabled={tries.length === 0}
+              title={
+                tries.length === 0
+                  ? 'Aucun lecteur à exporter avec les filtres actuels'
+                  : `Exporter les ${tries.length} lecteur(s) affichés en PDF`
+              }
+            >
+              Bilan PDF
+            </BtnGhost>
+          ) : undefined
+        }
       />
 
       {/* ---------------------------------------------------- vue & période */}
