@@ -81,7 +81,7 @@ export default function Dashboard() {
         supabase.from('v_cotisations_par_mois').select('*').gte('mois', mois6[0].cle),
         supabase.from('v_encaissements_par_mois').select('*').gte('mois', mois6[0].cle),
         supabase.from('v_effectif_par_mois').select('*').gte('mois', mois6[0].cle),
-        supabase.from('evenements').select('*').eq('statut', 'en_cours'),
+        supabase.from('evenements').select('id, nom, montant_participation').eq('statut', 'en_cours'),
         supabase.from('v_evenements_avancement').select('*'),
         supabase.from('v_caisse_totaux').select('*').maybeSingle(),
         supabase

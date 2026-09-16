@@ -90,7 +90,7 @@ export default function Lecteurs() {
           .range(de, a)
       ),
       supabase.from('fraternites').select('id, nom').order('nom'),
-      supabase.from('grades').select('*').order('id'),
+      supabase.from('grades').select('id, nom').order('id'),
     ]);
     setLecteurs((rL.data ?? []) as Lecteur[]);
     setFraternites((rF.data ?? []) as Fraternite[]);
@@ -157,8 +157,6 @@ export default function Lecteurs() {
       toast('Nom et prénom sont obligatoires.', 'err');
       return;
     }
-    // Ni l'année de naissance ni l'année d'adhésion ne peuvent dépasser
-    // l'année en cours.
     const v = validerAnneesLecteur(form.date_naissance, form.annee_adhesion);
     if (!v.ok) {
       toast(v.message ?? 'Saisie invalide.', 'err');
@@ -222,11 +220,6 @@ export default function Lecteurs() {
     load();
   }
 
-  /**
-   * Exporte en PDF la liste des lecteurs affichés, c'est-à-dire filtrés par
-   * l'onglet (actifs / archivés), la fraternité, le grade et la recherche.
-   * Le récapitulatif des filtres figure dans l'en-tête du document.
-   */
   async function exporterPdf() {
     if (filtered.length === 0) {
       toast('Aucun lecteur à exporter avec les filtres actuels.', 'err');
@@ -260,15 +253,17 @@ export default function Lecteurs() {
     }
   }
 
+  // Perf 200 : Maps O(1) au lieu de find() O(n) dans 200 rendus
+  const gradeMap = useMemo(() => new Map(grades.map((g) => [g.id, g.nom])), [grades]);
+  const fratMap = useMemo(() => new Map(fraternites.map((f) => [f.id, f.nom])), [fraternites]);
+  const gradeNom = useCallback((id: number) => gradeMap.get(id) ?? '—', [gradeMap]);
+  const fraterniteNom = useCallback((id: string | null) => (id ? fratMap.get(id) ?? '—' : '—'), [fratMap]);
+
   if (loading) return <Spinner label="Chargement des lecteurs…" />;
 
   const actifsCount = lecteurs.filter((l) => !l.archived).length;
   const capaciteMax = 200;
   const plein = actifsCount >= capaciteMax;
-
-  const gradeNom = (id: number) => grades.find((g) => g.id === id)?.nom ?? '—';
-  const fraterniteNom = (id: string | null) =>
-    fraternites.find((f) => f.id === id)?.nom ?? '—';
 
   return (
     <div>
@@ -303,11 +298,6 @@ export default function Lecteurs() {
         </div>
       )}
 
-      {/*
-        Filtres — ordre demandé : fraternités, PUIS grade, PUIS recherche.
-        Sur téléphone : une colonne pleine largeur (sans zoom auto iOS grâce
-        au texte 16px) ; sur ordinateur : une ligne fluide.
-      */}
       <div className="mb-3 grid gap-2 sm:flex sm:flex-wrap sm:items-center">
         <div className="flex rounded-lg border border-slate-200 bg-white p-0.5">
           <button
@@ -393,8 +383,6 @@ export default function Lecteurs() {
         />
       ) : (
         <>
-          {/* Téléphones : cartes empilées — pas de scroll horizontal, lecture
-              immédiate, zones tactiles larges (iOS / Android). */}
           <ul className="space-y-2 sm:hidden">
             {filtered.map((l) => (
               <li
@@ -444,7 +432,6 @@ export default function Lecteurs() {
               </li>
             ))}
           </ul>
-          {/* Ordinateurs / tablettes : tableau complet. */}
           <div className="hidden overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm sm:block">
             <table className="w-full min-w-[640px] text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">

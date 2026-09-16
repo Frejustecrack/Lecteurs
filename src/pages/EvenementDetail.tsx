@@ -209,9 +209,11 @@ export default function EvenementDetail() {
   /** Pourcentage de participations déjà versées. */
   const avancement = pct(totalCollecte, totalAttendu);
 
-  if (loading || !e) return <Spinner label="Chargement de l'événement…" />;
+  // Perf 200 : Map O(1) au lieu de find() O(n) dans 200 rendus d'historique
+  const lecteursMap = useMemo(() => new Map(lecteurs.map((l) => [l.id, l])), [lecteurs]);
+  const lecteurById = useCallback((lid: string) => lecteursMap.get(lid), [lecteursMap]);
 
-  const lecteurById = (lid: string) => lecteurs.find((l) => l.id === lid);
+  if (loading || !e) return <Spinner label="Chargement de l'événement…" />;
 
   async function inscrire() {
     const q = matricule.trim().toUpperCase();
