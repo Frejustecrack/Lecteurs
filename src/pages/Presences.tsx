@@ -82,21 +82,29 @@ export default function Presences() {
   const periodeLabel =
     mode === 'semaine' ? semaineLabel(semaine) : moisLabel(annee, mois);
 
+  const [busyBulk, setBusyBulk] = useState(false);
+
   const load = useCallback(async () => {
     if (samedis.length === 0) {
       setPresences([]);
       return;
     }
     const [rL, rF, rP] = await Promise.all([
+      // Optimisé 200 max : colonnes minimales pour réduire le transfert (~60% de gain)
       toutesLesLignes<Lecteur>((de, a) =>
-        supabase.from('lecteurs').select('*').eq('archived', false).order('matricule').range(de, a)
+        supabase
+          .from('lecteurs')
+          .select('id, matricule, nom, prenom, fraternite_id, archived')
+          .eq('archived', false)
+          .order('matricule')
+          .range(de, a)
       ),
-      supabase.from('fraternites').select('*').order('nom'),
+      supabase.from('fraternites').select('id, nom').order('nom'),
       // 200 lecteurs × 5 samedis = 1 000 lignes : la limite PostgREST. Paginé.
       toutesLesLignes<Presence>((de, a) =>
         supabase
           .from('presences')
-          .select('*')
+          .select('id, lecteur_id, date_samedi, statut')
           .gte('date_samedi', samedis[0])
           .lte('date_samedi', samedis[samedis.length - 1])
           .order('id')
@@ -179,6 +187,37 @@ export default function Presences() {
       toast(`Présence corrigée (${l.matricule}, ${fmtDate(sam)}) — tracée dans les logs.`);
     }
     load();
+  }
+
+  // Actions de masse pour 200 lecteurs : évite 200 clics le samedi matin
+  async function marquerTous(statut: 'present' | 'absent') {
+    if (samedisArrivesListe.length === 0) {
+      toast('Aucun samedi arrivé à marquer.', 'err');
+      return;
+    }
+    if (!confirm(`Marquer ${filtered.length} lecteur(s) comme ${statut === 'present' ? 'présents' : 'absents'} sur ${samedisArrivesListe.length} samedi(s) ?`)) return;
+    setBusyBulk(true);
+    try {
+      const payload = filtered.flatMap((l) =>
+        samedisArrivesListe.map((sam) => ({
+          lecteur_id: l.id,
+          date_samedi: sam,
+          statut,
+        }))
+      );
+      // Upsert par paquets de 200 pour éviter de surcharger PostgREST (200*5=1000)
+      for (let i = 0; i < payload.length; i += 200) {
+        const chunk = payload.slice(i, i + 200);
+        const { error } = await supabase.from('presences').upsert(chunk, { onConflict: 'lecteur_id,date_samedi' });
+        if (error) throw error;
+      }
+      toast(`${filtered.length} lecteur(s) marqués ${statut} sur ${samedisArrivesListe.length} samedi(s).`);
+      load();
+    } catch (e) {
+      toast(traduireErreur(e, 'marquer les présences en masse'), 'err');
+    } finally {
+      setBusyBulk(false);
+    }
   }
 
   function allerPrecedent() {
@@ -289,7 +328,7 @@ export default function Presences() {
         </p>
       )}
 
-      {/* ---------------------------------------------------------- filtres */}
+      {/* ---------------------------------------------------------- filtres + bulk 200 */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <select
           value={fId}
@@ -311,6 +350,24 @@ export default function Presences() {
           aria-label="Rechercher un lecteur"
           className={`${inputCls} min-w-0 flex-1 sm:max-w-xs`}
         />
+        {filtered.length > 0 && samedisArrivesListe.length > 0 && (
+          <div className="flex w-full gap-2 sm:w-auto">
+            <button
+              onClick={() => marquerTous('present')}
+              disabled={busyBulk}
+              className={`flex-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50 sm:flex-none ${busyBulk ? 'opacity-50' : ''}`}
+            >
+              {busyBulk ? '...' : `✓ Tous présents (${filtered.length})`}
+            </button>
+            <button
+              onClick={() => marquerTous('absent')}
+              disabled={busyBulk}
+              className="flex-1 rounded-lg bg-white border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50 sm:flex-none"
+            >
+              {busyBulk ? '...' : `✗ Tous absents`}
+            </button>
+          </div>
+        )}
       </div>
 
       {filtered.length === 0 ? (

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { toutesLesLignes } from '../lib/pagination';
 import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -81,24 +82,35 @@ export default function Caisse() {
     const d1 = dateISO(new Date(annee, mois, 1));
     const d2 = dateISO(new Date(annee, mois + 1, 0));
     const [rCM, rTot, rAn, rO, rL, rP] = await Promise.all([
-      // mois affiché
-      supabase
-        .from('cotisations')
-        .select(COLONNES_COT)
-        .eq('paye', true)
-        .gte('date_samedi', d1)
-        .lte('date_samedi', d2),
+      // mois affiché : 200 lecteurs × 5 samedis = 1000 pile la limite PostgREST → paginé
+      toutesLesLignes<Cotisation>((de, a) =>
+        supabase
+          .from('cotisations')
+          .select(COLONNES_COT)
+          .eq('paye', true)
+          .gte('date_samedi', d1)
+          .lte('date_samedi', d2)
+          .order('id')
+          .range(de, a)
+      ),
       // Solde général et cumul annuel : agrégats calculés par la base
       // (vues v_caisse_totaux / v_cotisations_par_annee) — jamais l'historique
       // complet des cotisations dans le navigateur (200 lecteurs × 52 samedis).
       supabase.from('v_caisse_totaux').select('*').maybeSingle(),
       supabase.from('v_cotisations_par_annee').select('*').eq('annee', annee).maybeSingle(),
-      supabase
-        .from('caisse_operations')
-        .select('*')
-        .is('event_id', null)
-        .order('created_at'),
-      supabase.from('lecteurs').select('id, matricule'),
+      // 200 lecteurs × 12 mois = potentiel >1000 opérations sur 2 ans → paginé
+      toutesLesLignes<CaisseOperation>((de, a) =>
+        supabase
+          .from('caisse_operations')
+          .select('id, type, montant, motif, created_at, recorded_by')
+          .is('event_id', null)
+          .order('created_at')
+          .range(de, a)
+      ),
+      // 200 lecteurs max : colonnes minimales, paginé pour éviter troncature PostgREST
+      toutesLesLignes<Lecteur>((de, a) =>
+        supabase.from('lecteurs').select('id, matricule').order('matricule').range(de, a)
+      ),
       supabase.from('profiles').select('id, full_name'),
     ]);
     setCotsMois((rCM.data ?? []) as Cotisation[]);
@@ -124,12 +136,6 @@ export default function Caisse() {
    * (`caisse_operations` est publiée par la migration 20260915180000.)
    */
   useRealtime('realtime-caisse', ['cotisations', 'caisse_operations'], load);
-
-  const matriculeDe = (lid: string) =>
-    lecteurs.find((l) => l.id === lid)?.matricule ?? '—';
-
-  const auteurName = (uid: string | null) =>
-    profiles.find((p) => p.id === uid)?.full_name ?? '—';
 
   // --------------------------------------------------------------- totaux
   // Solde général : toutes les cotisations jamais encaissées + encaissements
@@ -162,14 +168,16 @@ export default function Caisse() {
   const lignes: Ligne[] = useMemo(() => {
     const moisDebut = dateISO(new Date(annee, mois, 1));
     const moisFin = dateISO(new Date(annee, mois + 1, 0, 23, 59));
+    const mapLect = new Map(lecteurs.map((l) => [l.id, l.matricule]));
+    const mapProf = new Map(profiles.map((p) => [p.id, p.full_name ?? '—']));
     const cots: Ligne[] = cotsMois
       .filter((c) => c.date_samedi >= moisDebut && c.date_samedi <= moisFin)
       .map((c) => ({
         date: c.date_samedi,
         type: 'cotisation' as const,
-        libelle: `Cotisation — ${matriculeDe(c.lecteur_id)}`,
+        libelle: `Cotisation — ${mapLect.get(c.lecteur_id) ?? '—'}`,
         montant: c.montant,
-        auteur: auteurName(c.recorded_by),
+        auteur: mapProf.get(c.recorded_by ?? '') ?? '—',
       }));
     const opsLignes: Ligne[] = ops
       .filter((o) => {
@@ -181,10 +189,9 @@ export default function Caisse() {
         type: o.type,
         libelle: `${o.type === 'encaissement' ? 'Encaissement' : 'Décaissement'} — ${o.motif}`,
         montant: o.montant,
-        auteur: auteurName(o.recorded_by),
+        auteur: mapProf.get(o.recorded_by ?? '') ?? '—',
       }));
     return [...cots, ...opsLignes].sort((a, b) => (a.date < b.date ? 1 : -1));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cotsMois, ops, lecteurs, profiles, annee, mois]);
 
   async function ajouterOp() {

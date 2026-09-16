@@ -86,17 +86,20 @@ export default function Cotisations() {
     [samedis]
   );
 
+  const [busyBulk, setBusyBulk] = useState(false);
+
   const load = useCallback(async () => {
     const [rL, rF, rSet] = await Promise.all([
       toutesLesLignes<Lecteur>((de, a) =>
-        supabase.from('lecteurs').select('*').eq('archived', false).order('matricule').range(de, a)
+        supabase
+          .from('lecteurs')
+          .select('id, matricule, nom, prenom, fraternite_id, archived')
+          .eq('archived', false)
+          .order('matricule')
+          .range(de, a)
       ),
-      supabase.from('fraternites').select('*').order('nom'),
-      supabase
-        .from('app_settings')
-        .select('value')
-        .eq('key', 'montant_cotisation')
-        .maybeSingle(),
+      supabase.from('fraternites').select('id, nom').order('nom'),
+      supabase.from('app_settings').select('value').eq('key', 'montant_cotisation').maybeSingle(),
     ]);
     setLecteurs((rL.data ?? []) as Lecteur[]);
     setFraternites((rF.data ?? []) as Fraternite[]);
@@ -107,7 +110,7 @@ export default function Cotisations() {
       const rC = await toutesLesLignes<Cotisation>((de, a) =>
         supabase
           .from('cotisations')
-          .select('*')
+          .select('id, lecteur_id, date_samedi, paye, montant')
           .gte('date_samedi', samedis[0])
           .lte('date_samedi', samedis[samedis.length - 1])
           .order('id')
@@ -179,6 +182,39 @@ export default function Cotisations() {
       return;
     }
     load();
+  }
+
+  async function marquerTous(paye: boolean) {
+    if (!isCaissier) {
+      toast('Réservé aux Caissiers.', 'err');
+      return;
+    }
+    if (samedisArrivesListe.length === 0) {
+      toast('Aucun samedi arrivé.', 'err');
+      return;
+    }
+    if (!confirm(`Marquer ${filtered.length} lecteur(s) comme ${paye ? 'payés' : 'dus'} sur ${samedisArrivesListe.length} samedi(s) ?`)) return;
+    setBusyBulk(true);
+    try {
+      const payload = filtered.flatMap((l) =>
+        samedisArrivesListe.map((sam) => ({
+          lecteur_id: l.id,
+          date_samedi: sam,
+          paye,
+        }))
+      );
+      for (let i = 0; i < payload.length; i += 200) {
+        const chunk = payload.slice(i, i + 200);
+        const { error } = await supabase.from('cotisations').upsert(chunk, { onConflict: 'lecteur_id,date_samedi' });
+        if (error) throw error;
+      }
+      toast(`${filtered.length} lecteur(s) marqués ${paye ? 'payés' : 'dus'}.`);
+      load();
+    } catch (e) {
+      toast(traduireErreur(e, 'marquer les cotisations en masse'), 'err');
+    } finally {
+      setBusyBulk(false);
+    }
   }
 
   // --------------------------------------------------------------- totaux
@@ -355,6 +391,24 @@ export default function Cotisations() {
           aria-label="Rechercher un lecteur"
           className={`${inputCls} min-w-0 flex-1 sm:max-w-xs`}
         />
+        {isCaissier && filtered.length > 0 && samedisArrivesListe.length > 0 && (
+          <div className="flex w-full gap-2 sm:w-auto">
+            <button
+              onClick={() => marquerTous(true)}
+              disabled={busyBulk}
+              className="flex-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50 sm:flex-none"
+            >
+              {busyBulk ? '...' : `✓ Tous payés (${filtered.length})`}
+            </button>
+            <button
+              onClick={() => marquerTous(false)}
+              disabled={busyBulk}
+              className="flex-1 rounded-lg bg-white border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50 sm:flex-none"
+            >
+              Tous dus
+            </button>
+          </div>
+        )}
       </div>
 
       {filtered.length === 0 ? (

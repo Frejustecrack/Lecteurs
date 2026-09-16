@@ -81,11 +81,16 @@ export default function Lecteurs() {
 
   const load = useCallback(async () => {
     const [rL, rF, rG] = await Promise.all([
+      // 200 max : on charge tout, mais on évite le `select *` trop large
       toutesLesLignes<Lecteur>((de, a) =>
-        supabase.from('lecteurs').select('*').order('matricule').range(de, a)
+        supabase
+          .from('lecteurs')
+          .select('id, matricule, nom, prenom, grade_id, fraternite_id, annee_adhesion, archived, archived_at, contact_parent')
+          .order('matricule')
+          .range(de, a)
       ),
-      supabase.from('fraternites').select('*').order('nom'),
-      supabase.from('grades').select('*').order('id'),
+      supabase.from('fraternites').select('id, nom').order('nom'),
+      supabase.from('grades').select('id, nom').order('id'),
     ]);
     setLecteurs((rL.data ?? []) as Lecteur[]);
     setFraternites((rF.data ?? []) as Fraternite[]);
@@ -152,8 +157,6 @@ export default function Lecteurs() {
       toast('Nom et prénom sont obligatoires.', 'err');
       return;
     }
-    // Ni l'année de naissance ni l'année d'adhésion ne peuvent dépasser
-    // l'année en cours.
     const v = validerAnneesLecteur(form.date_naissance, form.annee_adhesion);
     if (!v.ok) {
       toast(v.message ?? 'Saisie invalide.', 'err');
@@ -217,11 +220,6 @@ export default function Lecteurs() {
     load();
   }
 
-  /**
-   * Exporte en PDF la liste des lecteurs affichés, c'est-à-dire filtrés par
-   * l'onglet (actifs / archivés), la fraternité, le grade et la recherche.
-   * Le récapitulatif des filtres figure dans l'en-tête du document.
-   */
   async function exporterPdf() {
     if (filtered.length === 0) {
       toast('Aucun lecteur à exporter avec les filtres actuels.', 'err');
@@ -255,17 +253,23 @@ export default function Lecteurs() {
     }
   }
 
+  // Perf 200 : Maps O(1) au lieu de find() O(n) dans 200 rendus
+  const gradeMap = useMemo(() => new Map(grades.map((g) => [g.id, g.nom])), [grades]);
+  const fratMap = useMemo(() => new Map(fraternites.map((f) => [f.id, f.nom])), [fraternites]);
+  const gradeNom = useCallback((id: number) => gradeMap.get(id) ?? '—', [gradeMap]);
+  const fraterniteNom = useCallback((id: string | null) => (id ? fratMap.get(id) ?? '—' : '—'), [fratMap]);
+
   if (loading) return <Spinner label="Chargement des lecteurs…" />;
 
-  const gradeNom = (id: number) => grades.find((g) => g.id === id)?.nom ?? '—';
-  const fraterniteNom = (id: string | null) =>
-    fraternites.find((f) => f.id === id)?.nom ?? '—';
+  const actifsCount = lecteurs.filter((l) => !l.archived).length;
+  const capaciteMax = 200;
+  const plein = actifsCount >= capaciteMax;
 
   return (
     <div>
       <PageHeader
         title="Lecteurs"
-        sub={`${lecteurs.filter((l) => !l.archived).length} lecteur(s) actif(s)`}
+        sub={`${actifsCount} lecteur(s) actif(s) / ${capaciteMax} max${plein ? ' — capacité atteinte' : ''}`}
         actions={
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
             <BtnGhost
@@ -282,18 +286,18 @@ export default function Lecteurs() {
             >
               ⬇ Export PDF ({filtered.length})
             </BtnGhost>
-            <BtnPrimary onClick={openCreate} className="w-full sm:w-auto">
+            <BtnPrimary onClick={openCreate} disabled={plein} title={plein ? `Capacité maximale ${capaciteMax} atteinte` : undefined} className="w-full sm:w-auto">
               + Nouveau lecteur
             </BtnPrimary>
           </div>
         }
       />
+      {plein && (
+        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Capacité maximale de {capaciteMax} lecteurs actifs atteinte. Archivez un lecteur avant d'en créer un nouveau.
+        </div>
+      )}
 
-      {/*
-        Filtres — ordre demandé : fraternités, PUIS grade, PUIS recherche.
-        Sur téléphone : une colonne pleine largeur (sans zoom auto iOS grâce
-        au texte 16px) ; sur ordinateur : une ligne fluide.
-      */}
       <div className="mb-3 grid gap-2 sm:flex sm:flex-wrap sm:items-center">
         <div className="flex rounded-lg border border-slate-200 bg-white p-0.5">
           <button
@@ -379,8 +383,6 @@ export default function Lecteurs() {
         />
       ) : (
         <>
-          {/* Téléphones : cartes empilées — pas de scroll horizontal, lecture
-              immédiate, zones tactiles larges (iOS / Android). */}
           <ul className="space-y-2 sm:hidden">
             {filtered.map((l) => (
               <li
@@ -430,7 +432,6 @@ export default function Lecteurs() {
               </li>
             ))}
           </ul>
-          {/* Ordinateurs / tablettes : tableau complet. */}
           <div className="hidden overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm sm:block">
             <table className="w-full min-w-[640px] text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">

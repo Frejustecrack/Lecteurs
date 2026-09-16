@@ -35,7 +35,8 @@ import { exportEvenementBilan } from '../pdf/export';
 type StatutPaiement = 'solde_regle' | 'partiel' | 'non_paye';
 
 function statutDe(paye: number, participation: number): StatutPaiement {
-  if (participation > 0 && paye >= participation) return 'solde_regle';
+  if (participation <= 0) return 'solde_regle'; // événement gratuit = toujours réglé
+  if (paye >= participation) return 'solde_regle';
   if (paye > 0) return 'partiel';
   return 'non_paye';
 }
@@ -89,19 +90,28 @@ export default function EvenementDetail() {
       return;
     }
     setE(ev);
-    const [rL, rP, rO] = await Promise.all([
+    // Optimisé pour 200 participants max : une seule requête avec jointure
+    // évite le `in('id', [200 UUIDs])` qui dépasse la limite d'URL PostgREST
+    const [rPartAvecLecteurs, rP, rO] = await Promise.all([
       supabase
-        .from('lecteurs')
-        .select('*')
-        .in('id', (await supabase.from('evenement_participants').select('lecteur_id').eq('event_id', id)).data?.map((x: { lecteur_id: string }) => x.lecteur_id) ?? []),
-      supabase.from('evenement_paiements').select('*').eq('event_id', id).order('paye_at'),
+        .from('evenement_participants')
+        .select('lecteur_id, lecteurs(id, matricule, nom, prenom, archived, fraternite_id, grade_id)')
+        .eq('event_id', id),
+      supabase
+        .from('evenement_paiements')
+        .select('id, lecteur_id, montant, paye_at')
+        .eq('event_id', id)
+        .order('paye_at'),
       supabase
         .from('caisse_operations')
-        .select('*')
+        .select('id, type, montant, motif, created_at')
         .eq('event_id', id)
         .order('created_at'),
     ]);
-    setLecteurs((rL.data ?? []) as Lecteur[]);
+    const lecteursFromJoin = (rPartAvecLecteurs.data ?? [])
+      .map((r: any) => r.lecteurs)
+      .filter(Boolean) as Lecteur[];
+    setLecteurs(lecteursFromJoin);
     setPaiements((rP.data ?? []) as EvenementPaiement[]);
     setOps((rO.data ?? []) as CaisseOperation[]);
     setLoading(false);
@@ -199,9 +209,11 @@ export default function EvenementDetail() {
   /** Pourcentage de participations déjà versées. */
   const avancement = pct(totalCollecte, totalAttendu);
 
-  if (loading || !e) return <Spinner label="Chargement de l'événement…" />;
+  // Perf 200 : Map O(1) au lieu de find() O(n) dans 200 rendus d'historique
+  const lecteursMap = useMemo(() => new Map(lecteurs.map((l) => [l.id, l])), [lecteurs]);
+  const lecteurById = useCallback((lid: string) => lecteursMap.get(lid), [lecteursMap]);
 
-  const lecteurById = (lid: string) => lecteurs.find((l) => l.id === lid);
+  if (loading || !e) return <Spinner label="Chargement de l'événement…" />;
 
   async function inscrire() {
     const q = matricule.trim().toUpperCase();
@@ -209,7 +221,7 @@ export default function EvenementDetail() {
     setBusyInscription(true);
     const { data: l } = await supabase
       .from('lecteurs')
-      .select('*')
+      .select('id, matricule, nom, prenom, archived')
       .eq('matricule', q)
       .maybeSingle();
     if (!l) {
@@ -399,17 +411,20 @@ export default function EvenementDetail() {
   }
 
   async function saveEdit() {
-    if (!formEdit.nom.trim() || !formEdit.date_evenement) {
+    if (!formEdit.nom.trim() || !formEdit.date_evenement || !e) {
       toast('Le nom et la date sont obligatoires.', 'err');
       return;
     }
     setBusyEdit(true);
-    const { error } = await supabase.from('evenements').update({
-      nom: formEdit.nom.trim(),
-      date_evenement: formEdit.date_evenement,
-      lieu: formEdit.lieu.trim() || null,
-      montant_participation: Number(formEdit.montant_participation) || 0,
-    });
+    const { error } = await supabase
+      .from('evenements')
+      .update({
+        nom: formEdit.nom.trim(),
+        date_evenement: formEdit.date_evenement,
+        lieu: formEdit.lieu.trim() || null,
+        montant_participation: Number(formEdit.montant_participation) || 0,
+      })
+      .eq('id', e.id);
     setBusyEdit(false);
     if (error) toast(traduireErreur(error, 'modifier cet événement'), 'err');
     else {

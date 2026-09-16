@@ -98,7 +98,7 @@ export default function Layout() {
     if (error) {
       toast(traduireErreur(error, 'modifier votre mot de passe'), 'err');
     } else {
-      setPwOpen(false);
+      closePwModal();
       setPwForm({ p1: '', p2: '' });
       toast('Mot de passe modifié.');
     }

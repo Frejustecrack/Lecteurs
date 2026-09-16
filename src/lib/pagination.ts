@@ -20,8 +20,15 @@ export interface ReponsePage<T> {
   error: { message: string } | null;
 }
 
+/**
+ * Chargement complet — tolère les `select` partiels (perf 200 lecteurs) :
+ * la requête peut renvoyer un sous-ensemble de colonnes, on caste en T
+ * côté appelant via `as Lecteur[]`. Le builder Supabase garde son type
+ * PostgrestFilterBuilder, d'où `any` ici pour éviter TS2322 sur les selects
+ * minimaux.
+ */
 export async function toutesLesLignes<T>(
-  page: (de: number, a: number) => PromiseLike<ReponsePage<T>>,
+  page: (de: number, a: number) => PromiseLike<ReponsePage<any>>,
   taille = TAILLE_PAGE
 ): Promise<{ data: T[]; error: { message: string } | null }> {
   const tout: T[] = [];
@@ -29,7 +36,7 @@ export async function toutesLesLignes<T>(
   for (;;) {
     const { data, error } = await page(de, de + taille - 1);
     if (error) return { data: tout, error };
-    const lot = data ?? [];
+    const lot = (data ?? []) as T[];
     tout.push(...lot);
     if (lot.length < taille) break;
     de += taille;

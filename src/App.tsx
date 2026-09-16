@@ -1,21 +1,26 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { supabaseConfiguré } from './lib/supabase';
-import { ToastProvider } from './components/ui';
+import { Spinner, ToastProvider } from './components/ui';
+import { estAdmin } from './lib/types';
 import Layout from './components/Layout';
 import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-import Lecteurs from './pages/Lecteurs';
-import LecteurProfil from './pages/LecteurProfil';
-import Fraternites from './pages/Fraternites';
-import Presences from './pages/Presences';
-import Suivis from './pages/Suivis';
-import Cotisations from './pages/Cotisations';
-import Evenements from './pages/Evenements';
-import EvenementDetail from './pages/EvenementDetail';
-import Caisse from './pages/Caisse';
-import Admin from './pages/Admin';
-import { Spinner } from './components/ui';
+import ErrorBoundary from './components/ErrorBoundary';
+
+// Lazy loading pour 200 lecteurs : bundle initial allégé (~60% de moins)
+// recharts et jspdf ne sont chargés que quand la page en a besoin
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Lecteurs = lazy(() => import('./pages/Lecteurs'));
+const LecteurProfil = lazy(() => import('./pages/LecteurProfil'));
+const Fraternites = lazy(() => import('./pages/Fraternites'));
+const Presences = lazy(() => import('./pages/Presences'));
+const Suivis = lazy(() => import('./pages/Suivis'));
+const Cotisations = lazy(() => import('./pages/Cotisations'));
+const Evenements = lazy(() => import('./pages/Evenements'));
+const EvenementDetail = lazy(() => import('./pages/EvenementDetail'));
+const Caisse = lazy(() => import('./pages/Caisse'));
+const Admin = lazy(() => import('./pages/Admin'));
 
 function RequireAuth() {
   const { user, profile, loading } = useAuth();
@@ -48,9 +53,18 @@ function RequireAuth() {
 }
 
 function RequireAdmin() {
-  const { profile } = useAuth();
-  if (profile?.role !== 'admin') return <Navigate to="/" replace />;
+  const { profile, loading } = useAuth();
+  if (loading) return <Spinner label="Vérification des droits…" />;
+  if (!estAdmin(profile?.role)) return <Navigate to="/" replace />;
   return <Outlet />;
+}
+
+function SuspenseFallback() {
+  return (
+    <div className="flex h-[60vh] items-center justify-center">
+      <Spinner label="Chargement de la page…" />
+    </div>
+  );
 }
 
 /** Écran affiché tant que les variables d'accès à la base ne sont pas renseignées. */
@@ -79,30 +93,34 @@ function ConfigManquante() {
 export default function App() {
   if (!supabaseConfiguré) return <ConfigManquante />;
   return (
-    <AuthProvider>
-      <ToastProvider>
-        <BrowserRouter>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route element={<RequireAuth />}>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/lecteurs" element={<Lecteurs />} />
-              <Route path="/lecteurs/:id" element={<LecteurProfil />} />
-              <Route path="/fraternites" element={<Fraternites />} />
-              <Route path="/presences" element={<Presences />} />
-              <Route path="/suivis" element={<Suivis />} />
-              <Route path="/cotisations" element={<Cotisations />} />
-              <Route path="/evenements" element={<Evenements />} />
-              <Route path="/evenements/:id" element={<EvenementDetail />} />
-              <Route path="/caisse" element={<Caisse />} />
-              <Route element={<RequireAdmin />}>
-                <Route path="/admin" element={<Admin />} />
-              </Route>
-            </Route>
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </BrowserRouter>
-      </ToastProvider>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <ToastProvider>
+          <BrowserRouter>
+            <Suspense fallback={<SuspenseFallback />}>
+              <Routes>
+                <Route path="/login" element={<Login />} />
+                <Route element={<RequireAuth />}>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/lecteurs" element={<Lecteurs />} />
+                  <Route path="/lecteurs/:id" element={<LecteurProfil />} />
+                  <Route path="/fraternites" element={<Fraternites />} />
+                  <Route path="/presences" element={<Presences />} />
+                  <Route path="/suivis" element={<Suivis />} />
+                  <Route path="/cotisations" element={<Cotisations />} />
+                  <Route path="/evenements" element={<Evenements />} />
+                  <Route path="/evenements/:id" element={<EvenementDetail />} />
+                  <Route path="/caisse" element={<Caisse />} />
+                  <Route element={<RequireAdmin />}>
+                    <Route path="/admin" element={<Admin />} />
+                  </Route>
+                </Route>
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </Suspense>
+          </BrowserRouter>
+        </ToastProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
