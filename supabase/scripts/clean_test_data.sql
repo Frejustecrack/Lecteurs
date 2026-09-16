@@ -1,5 +1,6 @@
--- Script manuel à exécuter dans Supabase Dashboard → SQL Editor
--- si l'intégration Git n'est pas connectée. Copiez/collez et exécutez UNE fois.
+-- Remise à zéro avant livraison — à exécuter UNE SEULE FOIS, à la main, dans
+-- Supabase Dashboard → SQL Editor. Ce fichier n'est volontairement PAS une
+-- migration : une migration serait rejouée sur toute nouvelle instance.
 -- Conserve les comptes (profiles), les grades et le paramétrage.
 
 truncate table

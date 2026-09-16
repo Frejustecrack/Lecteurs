@@ -3,6 +3,7 @@ import { Navigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { traduireErreur } from '../lib/errors';
+import { journaliser } from '../lib/journal';
 import { BtnPrimary, EyeToggle, Field, inputCls, pwInputCls } from '../components/ui';
 
 // Domaines internes réservés aux identifiants CDLJ (jamais utilisé pour l'envoi
@@ -50,12 +51,7 @@ export default function Login() {
         setError(traduireErreur(err, 'vous connecter'));
       } else if (data.session) {
         // Cahier des charges §18 : chaque connexion est tracée dans les logs.
-        await supabase.rpc('log_action', {
-          p_action: 'compte.connexion',
-          p_objet_type: 'profiles',
-          p_objet_ref: data.session.user.id,
-          p_detail: JSON.stringify({ identifiant }),
-        });
+        await journaliser('compte.connexion', undefined, undefined, { identifiant });
       }
     } finally {
       setBusy(false);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import { fmtDate, fmtMoney } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
@@ -46,13 +47,15 @@ export default function Evenements() {
   const load = useCallback(async () => {
     const [rE, rP] = await Promise.all([
       supabase.from('evenements').select('*').order('date_evenement', { ascending: false }),
-      supabase.from('evenement_participants').select('event_id'),
+      // Compteurs calculés en base (200 lecteurs × N événements dépasserait
+      // vite la limite de 1 000 lignes de PostgREST).
+      supabase.from('v_evenements_avancement').select('id, participants'),
     ]);
     const list = ((rE.data ?? []) as Evenement[]);
     setEvenements(list);
     const counts: Record<string, number> = {};
-    ((rP.data ?? []) as { event_id: string }[]).forEach((p) => {
-      counts[p.event_id] = (counts[p.event_id] ?? 0) + 1;
+    ((rP.data ?? []) as { id: string; participants: number }[]).forEach((p) => {
+      counts[p.id] = Number(p.participants);
     });
     setNbParticipants(counts);
     setLoading(false);
@@ -67,24 +70,7 @@ export default function Evenements() {
    * changent ailleurs est reflété ici sans rechargement manuel.
    * (Tables publiées par la migration 20260915180000.)
    */
-  useEffect(() => {
-    const channel = supabase
-      .channel('realtime-evenements')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'evenements' }, () => load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'evenement_participants' }, () => load())
-      .subscribe();
-    const onFocus = () => load();
-    const onVis = () => {
-      if (document.visibilityState === 'visible') load();
-    };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVis);
-      supabase.removeChannel(channel);
-    };
-  }, [load]);
+  useRealtime('realtime-evenements', ['evenements', 'evenement_participants'], load);
 
   function openCreate() {
     if (!isCO) {
@@ -101,18 +87,6 @@ export default function Evenements() {
     setFormOpen(true);
   }
 
-  function openEdit(e: Evenement) {
-    if (!canManage || e.statut === 'termine') return;
-    setEditId(e.id);
-    setForm({
-      nom: e.nom,
-      date_evenement: e.date_evenement,
-      lieu: e.lieu ?? '',
-      montant_participation: String(e.montant_participation),
-    });
-    setFormOpen(true);
-  }
-
   async function save() {
     if (!form.nom.trim() || !form.date_evenement) {
       toast('Nom et date sont obligatoires.', 'err');
@@ -124,9 +98,7 @@ export default function Evenements() {
       date_evenement: form.date_evenement,
       lieu: form.lieu.trim() || null,
       montant_participation: Number(form.montant_participation) || 0,
-      // Créateur de l'événement (cahier des charges §18 : actions tracées
-      // avec leur auteur).
-      ...(editId ? {} : { created_by: profile?.id ?? null }),
+      // created_by est posé par la base (trigger forcer_auteur = auth.uid()).
     };
     try {
       if (editId) {

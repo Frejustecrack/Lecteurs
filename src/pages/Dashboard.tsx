@@ -13,6 +13,7 @@ import {
   YAxis,
 } from 'recharts';
 import { supabase } from '../lib/supabase';
+import { useRealtime } from '../lib/useRealtime';
 import {
   dateISO,
   fmtMoney,
@@ -23,7 +24,7 @@ import {
 } from '../lib/dates';
 import { useAuth } from '../context/AuthContext';
 import { EmptyState, PageHeader, Spinner, StatCard } from '../components/ui';
-import type { Evenement, Lecteur, Presence } from '../lib/types';
+import type { Evenement, Lecteur } from '../lib/types';
 
 interface SeriesPoint {
   label: string;
@@ -56,142 +57,109 @@ export default function Dashboard() {
   }, []);
 
   // Synchronisation temps réel : toute modif de présence/cotisation/lecteur recharge le tableau de bord
-  useEffect(() => {
-    const ch = supabase
-      .channel('realtime-dashboard')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'presences' }, () => load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'cotisations' }, () => load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'lecteurs' }, () => load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'caisse_operations' }, () => load())
-      .subscribe();
-    const onFocus = () => load();
-    const onVis = () => { if (document.visibilityState === 'visible') load(); };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVis);
-      supabase.removeChannel(ch);
-    };
-  }, []);
+  useRealtime('realtime-dashboard', ['presences', 'cotisations', 'lecteurs', 'caisse_operations', 'evenements', 'evenement_paiements'], load);
 
   async function load() {
     const now = new Date();
     const am = now.getFullYear();
     const m = now.getMonth();
-    const debut6 = dateISO(new Date(am, m - 5, 1));
+    const cle = (y: number, mo: number) => `${y}-${String(mo + 1).padStart(2, '0')}`;
+    const moisCourant = cle(am, m);
+    const mois6 = Array.from({ length: 6 }, (_, i) => {
+      const d = new Date(am, m - (5 - i), 1);
+      return { annee: d.getFullYear(), mois: d.getMonth(), cle: cle(d.getFullYear(), d.getMonth()), date: d };
+    });
 
-    const [rLecteurs, rPres, rCot, rEven, rOps, rPaiements] = await Promise.all([
-      supabase.from('lecteurs').select('*'),
-      supabase
-        .from('presences')
-        .select('lecteur_id, date_samedi, statut')
-        .gte('date_samedi', debut6),
-      supabase.from('cotisations').select('lecteur_id, date_samedi, paye, montant, paid_at'),
-      supabase.from('evenements').select('*').eq('statut', 'en_cours'),
-      supabase
-        .from('caisse_operations')
-        .select('montant, type')
-        .is('event_id', null),
-      supabase.from('evenement_paiements').select('event_id, montant'),
-    ]);
+    // Dimensionné pour 200+ lecteurs : PostgREST tronque toute réponse à
+    // 1 000 lignes (6 mois de présences = 5 200 lignes). Plus AUCUNE ligne
+    // brute ici : tout vient de vues d'agrégats calculées par PostgreSQL
+    // (migration 20260916150000), quelques dizaines de lignes au total.
+    const [rCompteurs, rPresMois, rCotMois, rEncMois, rEffectif, rEven, rAvancement, rTotaux, rDerniers] =
+      await Promise.all([
+        supabase.from('v_lecteurs_compteurs').select('*').maybeSingle(),
+        supabase.from('v_presences_par_mois').select('*').gte('mois', mois6[0].cle),
+        supabase.from('v_cotisations_par_mois').select('*').gte('mois', mois6[0].cle),
+        supabase.from('v_encaissements_par_mois').select('*').gte('mois', mois6[0].cle),
+        supabase.from('v_effectif_par_mois').select('*').gte('mois', mois6[0].cle),
+        supabase.from('evenements').select('*').eq('statut', 'en_cours'),
+        supabase.from('v_evenements_avancement').select('*'),
+        supabase.from('v_caisse_totaux').select('*').maybeSingle(),
+        supabase
+          .from('lecteurs')
+          .select('id, matricule, nom, prenom, archived')
+          .eq('archived', false)
+          .order('matricule', { ascending: false })
+          .limit(6),
+      ]);
 
-    const lecteurs = (rLecteurs.data ?? []) as Lecteur[];
-    setLecteurs(lecteurs);
-    const actifs = lecteurs.filter((l) => !l.archived);
-    const activesIds = new Set(actifs.map((l) => l.id));
-    const pres = (rPres.data ?? []) as Presence[];
-    const cots = (rCot.data ?? []) as {
-      lecteur_id: string;
-      date_samedi: string;
-      paye: boolean;
-      montant: number;
-      paid_at: string | null;
-    }[];
+    const compteurs = (rCompteurs.data ?? { actifs: 0 }) as { actifs: number };
+    const actifs = Number(compteurs.actifs);
+    const presParMois = new Map(
+      ((rPresMois.data ?? []) as { mois: string; presents: number; absents: number }[]).map((r) => [r.mois, r])
+    );
+    const cotParMois = new Map(
+      ((rCotMois.data ?? []) as { mois: string; total: number; lecteurs_payes: number }[]).map((r) => [r.mois, r])
+    );
+    const encParMois = new Map(
+      ((rEncMois.data ?? []) as { mois: string; total: number }[]).map((r) => [r.mois, Number(r.total)])
+    );
+    const effectifParMois = new Map(
+      ((rEffectif.data ?? []) as { mois: string; effectif: number }[]).map((r) => [r.mois, Number(r.effectif)])
+    );
     const even = (rEven.data ?? []) as Evenement[];
-    const ops = (rOps.data ?? []) as { montant: number; type: string }[];
-    const paiements = (rPaiements.data ?? []) as { event_id: string; montant: number }[];
+    const avancement = new Map(
+      ((rAvancement.data ?? []) as { id: string; participants: number; paye: number }[]).map((r) => [r.id, r])
+    );
+    const totaux = (rTotaux.data ?? null) as {
+      total_cotisations: number;
+      total_encaissements: number;
+      total_decaissements: number;
+    } | null;
 
     // ---- KPIs mois courant
     // Seuls les samedis déjà arrivés sont comptabilisés : un samedi à venir
     // ne peut ni gonfler le taux d'absence ni le nombre de cotisations dues.
     const samedis = samedisArrives(samedisDuMois(am, m).map(dateISO));
-    const presMois = pres.filter(
-      (p) => activesIds.has(p.lecteur_id) && samedis.includes(p.date_samedi)
-    );
-    const nbPresent = presMois.filter((p) => p.statut === 'present').length;
-    const cotMois = cots.filter(
-      (c) => c.paye && samedis.includes(c.date_samedi) && activesIds.has(c.lecteur_id)
-    );
-    const lecteursPayes = new Set(cotMois.map((c) => c.lecteur_id)).size;
-
-    const soldeCot = cots.filter((c) => c.paye).reduce((s, c) => s + c.montant, 0);
-    const soldeOps = ops.reduce(
-      (s, o) => s + (o.type === 'encaissement' ? o.montant : -o.montant),
-      0
-    );
+    const nbPresent = Number(presParMois.get(moisCourant)?.presents ?? 0);
+    const lecteursPayes = Number(cotParMois.get(moisCourant)?.lecteurs_payes ?? 0);
+    const caisseSolde = totaux
+      ? Number(totaux.total_cotisations) +
+        Number(totaux.total_encaissements) -
+        Number(totaux.total_decaissements)
+      : 0;
 
     setKpi({
-      actifs: actifs.length,
-      tauxPresence: pct(nbPresent, actifs.length * Math.max(samedis.length, 1)),
+      actifs,
+      tauxPresence: pct(nbPresent, actifs * Math.max(samedis.length, 1)),
       presenceMoyenne:
         samedis.length > 0 ? Math.round((nbPresent / samedis.length) * 10) / 10 : 0,
-      tauxCotisation: pct(lecteursPayes, actifs.length),
-      caisseSolde: soldeCot + soldeOps,
+      tauxCotisation: pct(lecteursPayes, actifs),
+      caisseSolde,
       evenementsEnCours: even.length,
       samedisMois: samedis.length,
     });
 
     // ---- Événements en cours : avancement des paiements
-    const rParts = await supabase
-      .from('evenement_participants')
-      .select('event_id')
-      .in(
-        'event_id',
-        even.map((e) => e.id)
-      );
-    const parts = (rParts.data ?? []) as { event_id: string }[];
     setEvenements(
       even.map((e) => {
-        const nb = parts.filter((p) => p.event_id === e.id).length;
-        const paye = paiements
-          .filter((p) => p.event_id === e.id)
-          .reduce((s, p) => s + p.montant, 0);
-        return { ...e, participants: nb, paye, attendu: nb * e.montant_participation };
+        const av = avancement.get(e.id);
+        const nb = Number(av?.participants ?? 0);
+        return { ...e, participants: nb, paye: Number(av?.paye ?? 0), attendu: nb * e.montant_participation };
       })
     );
 
     // ---- Courbes 6 derniers mois
-    const pts: SeriesPoint[] = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(am, m - i, 1);
-      const ya = d.getFullYear();
-      const mo = d.getMonth();
-      const sam = samedisArrives(samedisDuMois(ya, mo).map(dateISO));
-      const finMois = dateISO(new Date(ya, mo + 1, 0, 23, 59));
-      const presM = pres.filter(
-        (p) => activesIds.has(p.lecteur_id) && sam.includes(p.date_samedi)
-      );
-      const effetif = lecteurs.filter(
-        (l) =>
-          l.created_at.slice(0, 10) <= finMois &&
-          (l.archived_at ? l.archived_at.slice(0, 10) > finMois : true)
-      ).length;
-      const cotM = cots
-        .filter(
-          (c) =>
-            c.paye && c.paid_at && c.paid_at.slice(0, 7) === `${ya}-${String(mo + 1).padStart(2, '0')}`
-        )
-        .reduce((s, c) => s + c.montant, 0);
-      pts.push({
-        label: d.toLocaleDateString('fr-FR', { month: 'short' }),
-        presences: presM.filter((p) => p.statut === 'present').length,
-        absences: presM.filter((p) => p.statut === 'absent').length,
-        effectif: effetif,
-        cotisations: cotM,
-      });
-    }
-    setSeries(pts);
+    setSeries(
+      mois6.map((mo) => ({
+        label: mo.date.toLocaleDateString('fr-FR', { month: 'short' }),
+        presences: Number(presParMois.get(mo.cle)?.presents ?? 0),
+        absences: Number(presParMois.get(mo.cle)?.absents ?? 0),
+        effectif: effectifParMois.get(mo.cle) ?? 0,
+        cotisations: encParMois.get(mo.cle) ?? 0,
+      }))
+    );
+
+    setLecteurs((rDerniers.data ?? []) as Lecteur[]);
     setLoading(false);
   }
 
@@ -360,15 +328,11 @@ export default function Dashboard() {
             Tout voir →
           </Link>
         </div>
-        {lecteurs.filter((l) => !l.archived).length === 0 ? (
+        {lecteurs.length === 0 ? (
           <EmptyState msg="Aucun lecteur pour l'instant. Créez le premier lecteur !" />
         ) : (
           <div className="divide-y divide-slate-100">
-            {lecteurs
-              .filter((l) => !l.archived)
-              .sort((a, b) => (a.matricule < b.matricule ? 1 : -1))
-              .slice(0, 6)
-              .map((l) => (
+            {lecteurs.map((l) => (
                 <Link
                   key={l.id}
                   to={`/lecteurs/${l.id}`}

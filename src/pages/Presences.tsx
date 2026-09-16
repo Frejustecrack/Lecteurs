@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { toutesLesLignes } from '../lib/pagination';
+import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import {
   dateISO,
@@ -18,6 +20,7 @@ import {
   semaineLabel,
 } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
+import { journaliserExport } from '../lib/journal';
 import {
   peutExporter as rolePeutExporter,
   type Fraternite,
@@ -85,13 +88,20 @@ export default function Presences() {
       return;
     }
     const [rL, rF, rP] = await Promise.all([
-      supabase.from('lecteurs').select('*').eq('archived', false).order('matricule'),
+      toutesLesLignes<Lecteur>((de, a) =>
+        supabase.from('lecteurs').select('*').eq('archived', false).order('matricule').range(de, a)
+      ),
       supabase.from('fraternites').select('*').order('nom'),
-      supabase
-        .from('presences')
-        .select('*')
-        .gte('date_samedi', samedis[0])
-        .lte('date_samedi', samedis[samedis.length - 1]),
+      // 200 lecteurs × 5 samedis = 1 000 lignes : la limite PostgREST. Paginé.
+      toutesLesLignes<Presence>((de, a) =>
+        supabase
+          .from('presences')
+          .select('*')
+          .gte('date_samedi', samedis[0])
+          .lte('date_samedi', samedis[samedis.length - 1])
+          .order('id')
+          .range(de, a)
+      ),
     ]);
     setLecteurs((rL.data ?? []) as Lecteur[]);
     setFraternites((rF.data ?? []) as Fraternite[]);
@@ -105,25 +115,7 @@ export default function Presences() {
   }, [load]);
 
   // Synchronisation temps réel : toute modification de présence est reflétée immédiatement
-  useEffect(() => {
-    const channel = supabase
-      .channel('realtime-presences')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'presences' }, () => {
-        load();
-      })
-      .subscribe();
-    const onFocus = () => load();
-    const onVis = () => {
-      if (document.visibilityState === 'visible') load();
-    };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVis);
-      supabase.removeChannel(channel);
-    };
-  }, [load]);
+  useRealtime('realtime-presences', ['presences'], load);
 
   const map = useMemo(() => {
     const m = new Map<string, Presence>();
@@ -169,7 +161,6 @@ export default function Presences() {
           lecteur_id: l.id,
           date_samedi: sam,
           statut: next,
-          recorded_by: profile?.id ?? null,
         },
         { onConflict: 'lecteur_id,date_samedi' }
       );
@@ -184,12 +175,7 @@ export default function Presences() {
       return;
     }
     if (gelee && isAdmin) {
-      await supabase.rpc('log_action', {
-        p_action: 'presence.correction_gelee',
-        p_objet_type: 'presences',
-        p_objet_ref: l.matricule,
-        p_detail: JSON.stringify({ date_samedi: sam, nouveau_statut: next }),
-      });
+      // Journalisé en base par le trigger d'audit (action « presence.correction_gelee »).
       toast(`Présence corrigée (${l.matricule}, ${fmtDate(sam)}) — tracée dans les logs.`);
     }
     load();
@@ -247,16 +233,11 @@ export default function Presences() {
                     samedis,
                     periode: periodeLabel,
                   });
-                  await supabase.rpc('log_action', {
-                    p_action: 'export.pdf',
-                    p_objet_type: 'presences',
-                    p_objet_ref: `${annee}-${String(mois + 1).padStart(2, '0')}`,
-                    p_detail: JSON.stringify({
-                      document: 'fiche_presences',
-                      vue: mode,
-                      fraternite: fId || 'globale',
-                    }),
-                  });
+                  await journaliserExport(
+                    'presences',
+                    `${annee}-${String(mois + 1).padStart(2, '0')}`,
+                    { document: 'fiche_presences', vue: mode, fraternite: fId || 'globale' }
+                  );
                   toast('PDF généré.');
                 } catch (err) {
                   toast(traduireErreur(err, 'générer le PDF des présences'), 'err');

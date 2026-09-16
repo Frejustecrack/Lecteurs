@@ -167,7 +167,21 @@ function piedPage(doc: jsPDF) {
  * Sauvegarde le document PDF de manière fiable quel que soit le terminal
  * (ordinateur de bureau, téléphone mobile Android, iPhone/iPad iOS).
  */
+/**
+ * Point d'interception pour les vérifications automatiques (`npm run verif:pdf`) :
+ * quand il est défini, le document n'est pas téléchargé mais remis au script
+ * de test. Jamais défini dans l'application.
+ */
+export let intercepteurPdf: ((doc: jsPDF, nomFichier: string) => void) | null = null;
+export function definirIntercepteurPdf(fn: typeof intercepteurPdf) {
+  intercepteurPdf = fn;
+}
+
 function sauvegarderPdf(doc: jsPDF, nomFichier: string) {
+  if (intercepteurPdf) {
+    intercepteurPdf(doc, nomFichier);
+    return;
+  }
   try {
     doc.save(nomFichier);
   } catch (err) {
@@ -191,9 +205,46 @@ function sauvegarderPdf(doc: jsPDF, nomFichier: string) {
   }
 }
 
+/**
+ * Tous les documents officiels sont produits au format A4 **portrait**
+ * (exigence CDLJ : un seul format, imprimable et archivable partout).
+ * Les tableaux larges (fiches mensuelles, liste des lecteurs) sont
+ * dimensionnés colonne par colonne pour tenir dans 182 mm utiles.
+ */
+function nouveauDocument(): jsPDF {
+  return new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+}
+
+/**
+ * Largeurs de colonnes des fiches mensuelles (présences / cotisations),
+ * calculées pour remplir exactement la largeur utile d'une page portrait
+ * (210 mm − 2 × 14 mm de marge = 182 mm), quel que soit le nombre de
+ * samedis (1 en vue hebdomadaire, 4 ou 5 en vue mensuelle).
+ */
+function colonnesFicheMensuelle(doc: jsPDF, nbSamedis: number, largeurTotal: number) {
+  const utile = doc.internal.pageSize.getWidth() - 2 * 14;
+  const matricule = 17;
+  const totaux = 2 * largeurTotal;
+  const samedi = nbSamedis >= 5 ? 12 : 13;
+  const reste = utile - matricule - totaux - nbSamedis * samedi;
+  const nom = Math.floor(reste * 0.55 * 10) / 10;
+  const prenom = Math.floor((reste - nom) * 10) / 10;
+  const styles: Record<number, { cellWidth?: number; halign?: 'left' | 'center' | 'right' }> = {
+    0: { cellWidth: matricule },
+    1: { cellWidth: nom },
+    2: { cellWidth: prenom },
+  };
+  for (let i = 0; i < nbSamedis; i++) styles[3 + i] = { cellWidth: samedi, halign: 'center' };
+  styles[3 + nbSamedis] = { cellWidth: largeurTotal, halign: 'center' };
+  styles[4 + nbSamedis] = { cellWidth: largeurTotal, halign: 'center' };
+  return styles;
+}
+
 function table(doc: jsPDF, opts: Parameters<typeof autoTable>[1]) {
   autoTable(doc, {
     theme: 'grid',
+    // Marges explicites (14 mm), alignées sur les textes libres posés à x = 14.
+    margin: { left: 14, right: 14 },
     styles: { fontSize: 8, cellPadding: 1.5 },
     headStyles: { fillColor: BLEU_CDLJ, fontSize: 8 },
     ...opts,
@@ -217,7 +268,7 @@ export function exportCotisations(args: {
   periode?: string;
 }) {
   const { annee, mois, fraternite, lecteurs, cotisations, montantCot, auteur } = args;
-  const doc = new jsPDF({ orientation: 'landscape' });
+  const doc = nouveauDocument();
   const samedisIso = args.samedis ?? samedisDuMois(annee, mois).map(dateISO);
   const map = new Map(cotisations.map((c) => [`${c.lecteur_id}|${c.date_samedi}`, c]));
 
@@ -248,7 +299,14 @@ export function exportCotisations(args: {
     return [l.matricule, l.nom.toUpperCase(), l.prenom, ...cells, fmtMoney(paye), fmtMoney(du * montantCot)];
   });
 
-  table(doc, { startY: y, head, body, foot: undefined });
+  table(doc, {
+    startY: y,
+    head,
+    body,
+    styles: { fontSize: 7.5, cellPadding: 1.3 },
+    headStyles: { fillColor: BLEU_CDLJ, fontSize: 7.5, halign: 'center' },
+    columnStyles: colonnesFicheMensuelle(doc, samedisIso.length, 18),
+  });
   piedPage(doc);
   sauvegarderPdf(doc, `cdlj_cotisations_${annee}-${String(mois + 1).padStart(2, '0')}.pdf`);
 }
@@ -269,7 +327,7 @@ export function exportPresences(args: {
   periode?: string;
 }) {
   const { annee, mois, fraternite, lecteurs, presences, auteur } = args;
-  const doc = new jsPDF({ orientation: 'landscape' });
+  const doc = nouveauDocument();
   const samedisIso = args.samedis ?? samedisDuMois(annee, mois).map(dateISO);
   const map = new Map(presences.map((p) => [`${p.lecteur_id}|${p.date_samedi}`, p]));
 
@@ -288,21 +346,43 @@ export function exportPresences(args: {
     let abs = 0;
     const cells = samedisIso.map((s) => {
       const p = map.get(`${l.id}|${s}`);
+      // Lisible sans légende : « Pres » présent, « Abs » absent.
       // À preuve du contraire : un samedi arrivé non pointé compte comme absent.
       if (p?.statut === 'present') {
         pres++;
-        return '✓';
+        return 'Pres';
       }
       if (p?.statut === 'absent' || samediEstArrive(s)) {
         abs++;
-        return '✗';
+        return 'Abs';
       }
+      // Samedi à venir : ni présent ni absent.
       return '—';
     });
     return [l.matricule, l.nom.toUpperCase(), l.prenom, ...cells, String(pres), String(abs)];
   });
 
-  table(doc, { startY: y, head, body });
+  table(doc, {
+    startY: y,
+    head,
+    body,
+    styles: { fontSize: 7.5, cellPadding: 1.3 },
+    headStyles: { fillColor: BLEU_CDLJ, fontSize: 7.5, halign: 'center' },
+    columnStyles: colonnesFicheMensuelle(doc, samedisIso.length, 15),
+    didParseCell: (data) => {
+      if (data.section !== 'body') return;
+      const idx = data.column.index;
+      if (idx < 3 || idx >= 3 + samedisIso.length) return;
+      const v = String(data.cell.raw ?? '');
+      if (v === 'Pres') {
+        data.cell.styles.textColor = [21, 128, 61]; // vert
+        data.cell.styles.fontStyle = 'bold';
+      } else if (v === 'Abs') {
+        data.cell.styles.textColor = [185, 28, 28]; // rouge
+        data.cell.styles.fontStyle = 'bold';
+      }
+    },
+  });
   piedPage(doc);
   sauvegarderPdf(doc, `cdlj_presences_${annee}-${String(mois + 1).padStart(2, '0')}.pdf`);
 }
@@ -332,7 +412,7 @@ export function exportEvenementBilan(args: {
   const decaissements = args.decaissements ?? 0;
   const soldeCaisse =
     args.soldeCaisse ?? totalCollecte + encaissements - decaissements;
-  const doc = new jsPDF();
+  const doc = nouveauDocument();
   const y = entete(
     doc,
     'Bilan d\'événement',
@@ -417,7 +497,7 @@ export function exportCaisse(args: {
   auteur: string;
 }) {
   const { periode, lignes, totalPaye, totalEnc, totalDec, soldeGeneral, auteur } = args;
-  const doc = new jsPDF();
+  const doc = nouveauDocument();
   const y = entete(doc, 'État de la caisse (générale)', `Période : ${periode}`, auteur);
 
   const head = [['Date', 'Type', 'Libellé', 'Auteur', 'Montant']];
@@ -460,7 +540,7 @@ export function exportFicheLecteur(args: {
 }) {
   const { lecteur: l, grades, history, presences, cotisations, evenements, appreciations, auteur, montantCot } =
     args;
-  const doc = new jsPDF();
+  const doc = nouveauDocument();
   const y = entete(
     doc,
     'Fiche individuelle du lecteur',
@@ -607,7 +687,7 @@ export function exportListeLecteurs(args: {
 }) {
   const { lecteurs, grades, fraternites, fraternite, grade, recherche, statut, auteur } =
     args;
-  const doc = new jsPDF({ orientation: 'landscape' });
+  const doc = nouveauDocument();
   const gradeNom = (id: number) =>
     grades.find((g) => g.id === id)?.nom ?? '—';
   const fraterniteNom = (id: string | null) =>
@@ -661,11 +741,18 @@ export function exportListeLecteurs(args: {
     startY: y,
     head,
     body,
+    styles: { fontSize: 7, cellPadding: 1.2 },
+    headStyles: { fillColor: BLEU_CDLJ, fontSize: 7 },
     columnStyles: {
-      0: { halign: 'right', cellWidth: 12 },
-      1: { cellWidth: 24 },
-      6: { halign: 'center' },
-      7: { halign: 'center' },
+      0: { halign: 'right', cellWidth: 8 },
+      1: { cellWidth: 17 },
+      2: { cellWidth: 28 },
+      3: { cellWidth: 26 },
+      4: { cellWidth: 20 },
+      5: { cellWidth: 24 },
+      6: { halign: 'center', cellWidth: 18 },
+      7: { halign: 'center', cellWidth: 16 },
+      8: { cellWidth: 25 },
     },
   });
   const finY =
@@ -697,7 +784,7 @@ export function exportSuivis(args: {
   auteur: string;
 }) {
   const { periode, samedis, recaps, fraterniteNom, contexte, auteur } = args;
-  const doc = new jsPDF();
+  const doc = nouveauDocument();
   const y = entete(doc, "Récapitulatif d'assiduité", periode, auteur);
 
   const nb = samedis.length;
