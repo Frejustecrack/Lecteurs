@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import {
   dateISO,
@@ -10,8 +11,8 @@ import {
   moisLabel,
 } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
+import { journaliserExport } from '../lib/journal';
 import {
-  estAdmin,
   estCO,
   peutExporter as rolePeutExporter,
   type CaisseOperation,
@@ -48,7 +49,6 @@ export default function Caisse() {
   const { profile } = useAuth();
   // `estCO` couvre `co` ET `co_paroissial`, comme `public.is_co()` en base.
   const isCO = estCO(profile?.role);
-  const isAdmin = estAdmin(profile?.role);
   // Cahier des charges §17 : l'état de caisse est exportable par
   // Admin, CO et Caissiers uniquement (les Responsables consultent sans exporter).
   const canExport = rolePeutExporter(profile?.role);
@@ -61,7 +61,10 @@ export default function Caisse() {
   /** Cotisations payées du mois affiché (mouvements + total mensuel). */
   const [cotsMois, setCotsMois] = useState<Cotisation[]>([]);
   /** Cotisations payées depuis l'origine (solde général + cumul annuel). */
-  const [cotsToutes, setCotsToutes] = useState<Cotisation[]>([]);
+  /** Somme de toutes les cotisations encaissées (vue v_caisse_totaux). */
+  const [totalCotTout, setTotalCotTout] = useState(0);
+  /** Cotisations de l'année affichée (vue v_cotisations_par_annee). */
+  const [cotAnnee, setCotAnnee] = useState(0);
   const [ops, setOps] = useState<CaisseOperation[]>([]);
   const [lecteurs, setLecteurs] = useState<Lecteur[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -77,7 +80,7 @@ export default function Caisse() {
   const load = useCallback(async () => {
     const d1 = dateISO(new Date(annee, mois, 1));
     const d2 = dateISO(new Date(annee, mois + 1, 0));
-    const [rCM, rCT, rO, rL, rP] = await Promise.all([
+    const [rCM, rTot, rAn, rO, rL, rP] = await Promise.all([
       // mois affiché
       supabase
         .from('cotisations')
@@ -85,9 +88,11 @@ export default function Caisse() {
         .eq('paye', true)
         .gte('date_samedi', d1)
         .lte('date_samedi', d2),
-      // historique complet : le solde général et le cumul annuel ne peuvent
-      // pas être calculés sur le seul mois affiché.
-      supabase.from('cotisations').select(COLONNES_COT).eq('paye', true),
+      // Solde général et cumul annuel : agrégats calculés par la base
+      // (vues v_caisse_totaux / v_cotisations_par_annee) — jamais l'historique
+      // complet des cotisations dans le navigateur (200 lecteurs × 52 samedis).
+      supabase.from('v_caisse_totaux').select('*').maybeSingle(),
+      supabase.from('v_cotisations_par_annee').select('*').eq('annee', annee).maybeSingle(),
       supabase
         .from('caisse_operations')
         .select('*')
@@ -97,7 +102,10 @@ export default function Caisse() {
       supabase.from('profiles').select('id, full_name'),
     ]);
     setCotsMois((rCM.data ?? []) as Cotisation[]);
-    setCotsToutes((rCT.data ?? []) as Cotisation[]);
+    const t = (rTot.data ?? null) as { total_cotisations: number } | null;
+    setTotalCotTout(t ? Number(t.total_cotisations) : 0);
+    const a = (rAn.data ?? null) as { total: number } | null;
+    setCotAnnee(a ? Number(a.total) : 0);
     setOps((rO.data ?? []) as CaisseOperation[]);
     setLecteurs((rL.data ?? []) as Lecteur[]);
     setProfiles((rP.data ?? []) as Profile[]);
@@ -115,24 +123,7 @@ export default function Caisse() {
    * sans rechargement.
    * (`caisse_operations` est publiée par la migration 20260915180000.)
    */
-  useEffect(() => {
-    const channel = supabase
-      .channel('realtime-caisse')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'cotisations' }, () => load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'caisse_operations' }, () => load())
-      .subscribe();
-    const onFocus = () => load();
-    const onVis = () => {
-      if (document.visibilityState === 'visible') load();
-    };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVis);
-      supabase.removeChannel(channel);
-    };
-  }, [load]);
+  useRealtime('realtime-caisse', ['cotisations', 'caisse_operations'], load);
 
   const matriculeDe = (lid: string) =>
     lecteurs.find((l) => l.id === lid)?.matricule ?? '—';
@@ -144,7 +135,6 @@ export default function Caisse() {
   // Solde général : toutes les cotisations jamais encaissées + encaissements
   // − décaissements. Le mois affiché n'entre pas dans ce calcul.
   const totalCotMois = cotsMois.reduce((s, c) => s + c.montant, 0);
-  const totalCotTout = cotsToutes.reduce((s, c) => s + c.montant, 0);
   const enc = ops
     .filter((o) => o.type === 'encaissement')
     .reduce((s, o) => s + o.montant, 0);
@@ -164,9 +154,6 @@ export default function Caisse() {
 
   // Cumul annuel : cotisations dont le samedi tombe dans l'année affichée
   // (même base que la vue mensuelle) + opérations de caisse de cette année.
-  const cotAnnee = cotsToutes
-    .filter((c) => c.date_samedi.slice(0, 4) === prefixeAnnee)
-    .reduce((s, c) => s + c.montant, 0);
   const opsAnnee = ops
     .filter((o) => o.created_at.slice(0, 4) === prefixeAnnee)
     .reduce((s, o) => s + (o.type === 'encaissement' ? o.montant : -o.montant), 0);
@@ -244,12 +231,7 @@ export default function Caisse() {
         soldeGeneral,
         auteur: profile?.full_name ?? '—',
       });
-      await supabase.rpc('log_action', {
-        p_action: 'export.pdf',
-        p_objet_type: 'caisse',
-        p_objet_ref: prefixeMois,
-        p_detail: JSON.stringify({ document: 'etat_caisse' }),
-      });
+      await journaliserExport('caisse', prefixeMois, { document: 'etat_caisse' });
       toast('PDF généré.');
     } catch (err) {
       toast(traduireErreur(err, 'générer le PDF de la caisse'), 'err');

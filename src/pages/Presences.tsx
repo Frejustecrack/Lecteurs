@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import {
   dateISO,
@@ -18,6 +19,7 @@ import {
   semaineLabel,
 } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
+import { journaliserExport } from '../lib/journal';
 import {
   peutExporter as rolePeutExporter,
   type Fraternite,
@@ -105,25 +107,7 @@ export default function Presences() {
   }, [load]);
 
   // Synchronisation temps réel : toute modification de présence est reflétée immédiatement
-  useEffect(() => {
-    const channel = supabase
-      .channel('realtime-presences')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'presences' }, () => {
-        load();
-      })
-      .subscribe();
-    const onFocus = () => load();
-    const onVis = () => {
-      if (document.visibilityState === 'visible') load();
-    };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVis);
-      supabase.removeChannel(channel);
-    };
-  }, [load]);
+  useRealtime('realtime-presences', ['presences'], load);
 
   const map = useMemo(() => {
     const m = new Map<string, Presence>();
@@ -184,12 +168,7 @@ export default function Presences() {
       return;
     }
     if (gelee && isAdmin) {
-      await supabase.rpc('log_action', {
-        p_action: 'presence.correction_gelee',
-        p_objet_type: 'presences',
-        p_objet_ref: l.matricule,
-        p_detail: JSON.stringify({ date_samedi: sam, nouveau_statut: next }),
-      });
+      // Journalisé en base par le trigger d'audit (action « presence.correction_gelee »).
       toast(`Présence corrigée (${l.matricule}, ${fmtDate(sam)}) — tracée dans les logs.`);
     }
     load();
@@ -247,16 +226,11 @@ export default function Presences() {
                     samedis,
                     periode: periodeLabel,
                   });
-                  await supabase.rpc('log_action', {
-                    p_action: 'export.pdf',
-                    p_objet_type: 'presences',
-                    p_objet_ref: `${annee}-${String(mois + 1).padStart(2, '0')}`,
-                    p_detail: JSON.stringify({
-                      document: 'fiche_presences',
-                      vue: mode,
-                      fraternite: fId || 'globale',
-                    }),
-                  });
+                  await journaliserExport(
+                    'presences',
+                    `${annee}-${String(mois + 1).padStart(2, '0')}`,
+                    { document: 'fiche_presences', vue: mode, fraternite: fId || 'globale' }
+                  );
                   toast('PDF généré.');
                 } catch (err) {
                   toast(traduireErreur(err, 'générer le PDF des présences'), 'err');

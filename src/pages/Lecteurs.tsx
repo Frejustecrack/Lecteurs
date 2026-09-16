@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import { fmtDateHeure } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
+import { journaliserExport } from '../lib/journal';
 import {
   anneeCourante,
   bornesAnneeAdhesion,
@@ -96,24 +98,7 @@ export default function Lecteurs() {
    * Temps réel : un lecteur créé ou rattaché à une fraternité ailleurs
    * apparaît ici sans rechargement.
    */
-  useEffect(() => {
-    const channel = supabase
-      .channel('realtime-lecteurs')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'lecteurs' }, () => load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'fraternites' }, () => load())
-      .subscribe();
-    const onFocus = () => load();
-    const onVis = () => {
-      if (document.visibilityState === 'visible') load();
-    };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVis);
-      supabase.removeChannel(channel);
-    };
-  }, [load]);
+  useRealtime('realtime-lecteurs', ['lecteurs', 'fraternites'], load);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -229,19 +214,6 @@ export default function Lecteurs() {
     load();
   }
 
-  async function restaurer(l: Lecteur) {
-    if (!confirm(`Restaurer ${l.matricule} — ${l.prenom} ${l.nom} ?`)) return;
-    setBusyArchivage(l.id);
-    const { error } = await supabase
-      .from('lecteurs')
-      .update({ archived: false, archived_at: null })
-      .eq('id', l.id);
-    setBusyArchivage(null);
-    if (error) toast(traduireErreur(error, 'restaurer ce lecteur'), 'err');
-    else toast('Lecteur restauré.');
-    load();
-  }
-
   /**
    * Exporte en PDF la liste des lecteurs affichés, c'est-à-dire filtrés par
    * l'onglet (actifs / archivés), la fraternité, le grade et la recherche.
@@ -264,18 +236,13 @@ export default function Lecteurs() {
         statut: tab,
         auteur: profile?.full_name ?? profile?.username ?? '—',
       });
-      await supabase.rpc('log_action', {
-        p_action: 'export.pdf',
-        p_objet_type: 'lecteurs',
-        p_objet_ref: tab,
-        p_detail: JSON.stringify({
-          document: 'liste_lecteurs',
-          statut: tab,
-          fraternite: fId || 'toutes',
-          grade: gradeId || 'tous',
-          recherche: search.trim() || null,
-          nombre: filtered.length,
-        }),
+      await journaliserExport('lecteurs', tab, {
+        document: 'liste_lecteurs',
+        statut: tab,
+        fraternite: fId || 'toutes',
+        grade: gradeId || 'tous',
+        recherche: search.trim() || null,
+        nombre: filtered.length,
       });
       toast(`PDF généré — ${filtered.length} lecteur(s).`);
     } catch (e) {

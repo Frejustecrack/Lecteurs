@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import { traduireErreur } from '../lib/errors';
+import { journaliserExport } from '../lib/journal';
 import {
   dateISO,
   deplaceMois,
@@ -148,26 +150,7 @@ export default function Suivis() {
   }, [load]);
 
   // Synchronisation temps réel : toute modification de présence est reflétée dans le récap
-  useEffect(() => {
-    const channel = supabase
-      .channel('realtime-suivis')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'presences' }, () => {
-        load();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'lecteurs' }, () => {
-        load();
-      })
-      .subscribe();
-    const onFocus = () => load();
-    const onVis = () => { if (document.visibilityState === 'visible') load(); };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVis);
-      supabase.removeChannel(channel);
-    };
-  }, [load]);
+  useRealtime('realtime-suivis', ['presences', 'lecteurs'], load);
 
   // Le samedi sélectionné doit rester dans la période courante.
   useEffect(() => {
@@ -281,12 +264,7 @@ export default function Suivis() {
         contexte: morceaux.length > 0 ? morceaux.join('   •   ') : undefined,
         auteur: profile?.full_name ?? '—',
       });
-      await supabase.rpc('log_action', {
-        p_action: 'export.pdf',
-        p_objet_type: 'suivis',
-        p_objet_ref: periodeLabel,
-        p_detail: JSON.stringify({ document: 'suivis', periode: periodeLabel }),
-      });
+      await journaliserExport('suivis', periodeLabel, { document: 'suivis', periode: periodeLabel });
       toast('Le récapitulatif PDF a été généré.');
     } catch (err) {
       toast(traduireErreur(err, 'générer le récapitulatif PDF'), 'err');

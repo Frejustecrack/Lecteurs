@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import { traduireErreur } from '../lib/errors';
 import { peutGererLecteurs, type Fraternite, type Lecteur } from '../lib/types';
@@ -49,22 +50,7 @@ export default function Fraternites() {
   }, [load]);
 
   // Synchronisation temps réel
-  useEffect(() => {
-    const ch = supabase
-      .channel('realtime-fraternites')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'fraternites' }, () => load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'lecteurs' }, () => load())
-      .subscribe();
-    const onFocus = () => load();
-    const onVis = () => { if (document.visibilityState === 'visible') load(); };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVis);
-      supabase.removeChannel(ch);
-    };
-  }, [load]);
+  useRealtime('realtime-fraternites', ['fraternites', 'lecteurs'], load);
 
   function openCreate() {
     setEditId(null);

@@ -27,6 +27,17 @@ jobs:
       - name: Logique métier (scripts/verif.ts importe le vrai src/lib)
         run: npm run verif
 
+      # PostgreSQL réel (PGlite) : migrations rejouées depuis zéro + RLS
+      # exercé rôle par rôle + volumétrie 200 lecteurs.
+      - name: Base — migrations, RLS, triggers
+        run: npm run verif:db
+
+      - name: Exports PDF (portrait, Pres/Abs, 200 lecteurs)
+        run: npm run verif:pdf
+
+      - name: Synchronisation temps réel (vrai client, 5 postes, rafales)
+        run: npm run verif:realtime
+
       - name: Build de production
         run: npm run build
 
@@ -49,6 +60,6 @@ jobs:
       - name: Vérifier chaque fichier SQL
         run: |
           set -e
-          for f in supabase/migrations/*.sql supabase/*_manual.sql supabase/seed-comptes.sql; do
+          for f in supabase/migrations/*.sql supabase/scripts/*.sql; do
             python -c "import pglast,sys; pglast.parse_sql(open(sys.argv[1]).read()); print('OK   '+sys.argv[1])" "$f"
           done

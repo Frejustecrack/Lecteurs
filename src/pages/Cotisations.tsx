@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import {
   dateISO,
@@ -17,6 +18,7 @@ import {
   semaineLabel,
 } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
+import { journaliserExport } from '../lib/journal';
 import {
   estCaissier,
   peutExporter as rolePeutExporter,
@@ -116,25 +118,7 @@ export default function Cotisations() {
   }, [load]);
 
   // Synchronisation temps réel : toute modif de cotisation est reflétée immédiatement
-  useEffect(() => {
-    const channel = supabase
-      .channel('realtime-cotisations')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'cotisations' }, () => {
-        load();
-      })
-      .subscribe();
-    const onFocus = () => load();
-    const onVis = () => {
-      if (document.visibilityState === 'visible') load();
-    };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVis);
-      supabase.removeChannel(channel);
-    };
-  }, [load]);
+  useRealtime('realtime-cotisations', ['cotisations'], load);
 
   const map = useMemo(() => {
     const m = new Map<string, Cotisation>();
@@ -265,16 +249,11 @@ export default function Cotisations() {
                     samedis,
                     periode: periodeLabel,
                   });
-                  await supabase.rpc('log_action', {
-                    p_action: 'export.pdf',
-                    p_objet_type: 'cotisations',
-                    p_objet_ref: `${annee}-${String(mois + 1).padStart(2, '0')}`,
-                    p_detail: JSON.stringify({
-                      document: 'fiche_cotisations',
-                      vue: mode,
-                      fraternite: fId || 'globale',
-                    }),
-                  });
+                  await journaliserExport(
+                    'cotisations',
+                    `${annee}-${String(mois + 1).padStart(2, '0')}`,
+                    { document: 'fiche_cotisations', vue: mode, fraternite: fId || 'globale' }
+                  );
                   toast('PDF généré.');
                 } catch (err) {
                   toast(traduireErreur(err, 'générer le PDF des cotisations'), 'err');

@@ -34,6 +34,7 @@ import {
   trierRecaps,
 } from '../src/lib/recap.ts';
 import type { Lecteur } from '../src/lib/types.ts';
+import { creerPlanificateur } from '../src/lib/planificateur.ts';
 
 let reussites = 0;
 const echecs: string[] = [];
@@ -376,6 +377,138 @@ eq('samedi unique : 2 absences effectives (Paul absent + Jean non pointé)', app
 const recapVide = calculerRecaps(lect, pres, []);
 eq('période vide : taux 0', recapVide[0].taux, 0);
 eq('période vide : aucun assidu', appliquerFiltreRecap(recapVide, 'parfaits').length, 0);
+
+// ============================================================================
+console.log('\n── Temps réel : regroupement et non-superposition des rechargements ──');
+// ============================================================================
+// Horloge factice : les minuteurs se déclenchent quand on avance le temps.
+{
+  type Minuteur = { id: number; a: number; fn: () => void };
+  let horloge = 0;
+  let prochainId = 1;
+  let minuteurs: Minuteur[] = [];
+  const setTimer = (fn: () => void, ms: number) => {
+    const m = { id: prochainId++, a: horloge + ms, fn };
+    minuteurs.push(m);
+    return m.id;
+  };
+  const clearTimer = (id: unknown) => {
+    minuteurs = minuteurs.filter((m) => m.id !== id);
+  };
+  const avancer = async (ms: number) => {
+    const cible = horloge + ms;
+    for (;;) {
+      const prets = minuteurs.filter((m) => m.a <= cible).sort((x, y) => x.a - y.a);
+      if (prets.length === 0) break;
+      const m = prets[0];
+      horloge = m.a;
+      minuteurs = minuteurs.filter((x) => x.id !== m.id);
+      m.fn();
+      await Promise.resolve();
+    }
+    horloge = cible;
+    await Promise.resolve();
+  };
+  const tick = async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  };
+
+  // --- 1. Une rafale de 10 événements = 1 seul rechargement.
+  let appels = 0;
+  let plan = creerPlanificateur(async () => { appels++; }, { delai: 400, setTimer, clearTimer });
+  for (let i = 0; i < 10; i++) {
+    plan.signaler();
+    await avancer(50); // 10 événements espacés de 50 ms (< 400 ms)
+  }
+  eq('rafale : aucun rechargement avant la fin du délai', appels, 0);
+  await avancer(400);
+  await tick();
+  eq('rafale de 10 événements → 1 seul rechargement', appels, 1);
+
+  // --- 2. Deux rafales séparées = 2 rechargements.
+  plan.signaler();
+  await avancer(450);
+  await tick();
+  eq('seconde rafale → second rechargement', appels, 2);
+
+  // --- 3. Un événement pendant un rechargement lent : un seul rechargement
+  //        supplémentaire, exécuté après la fin du premier (pas en parallèle).
+  let enCours = 0;
+  let maxParallele = 0;
+  let termines = 0;
+  let liberer: (() => void) | null = null;
+  plan = creerPlanificateur(
+    () =>
+      new Promise<void>((resolve) => {
+        enCours++;
+        maxParallele = Math.max(maxParallele, enCours);
+        liberer = () => {
+          enCours--;
+          termines++;
+          resolve();
+        };
+      }),
+    { delai: 400, setTimer, clearTimer }
+  );
+  plan.signaler();
+  await avancer(400);
+  await tick();
+  eq('rechargement lent démarré', enCours, 1);
+  // 3 nouveaux événements arrivent pendant qu'il tourne
+  plan.signaler(); plan.signaler(); plan.signaler();
+  await avancer(400);
+  await tick();
+  eq('pas de second rechargement en parallèle', maxParallele, 1);
+  const lib1 = liberer as unknown as () => void; liberer = null;
+  lib1();
+  await tick();
+  eq('à la fin du premier, exactement un rechargement de rattrapage démarre', enCours, 1);
+  const lib2 = liberer as unknown as () => void; liberer = null;
+  lib2();
+  await tick();
+  eq('deux rechargements au total, jamais simultanés', termines, 2);
+  eq('aucun rechargement supplémentaire en attente', enCours, 0);
+
+  // --- 4. immediat() pendant un rechargement : même garantie.
+  plan.immediat();
+  await tick();
+  plan.immediat();
+  await tick();
+  eq('immediat() pendant un rechargement ne double pas', maxParallele, 1);
+  (liberer as unknown as () => void)();
+  await tick();
+  (liberer as unknown as () => void)();
+  await tick();
+  eq('immediat() doublé → rattrapage unique', termines, 4);
+
+  // --- 5. arreter() : plus rien après le démontage.
+  appels = 0;
+  plan = creerPlanificateur(async () => { appels++; }, { delai: 400, setTimer, clearTimer });
+  plan.signaler();
+  plan.arreter();
+  await avancer(1000);
+  await tick();
+  plan.signaler();
+  plan.immediat();
+  await avancer(1000);
+  await tick();
+  eq('après arreter(), aucun rechargement', appels, 0);
+  eq('après arreter(), aucun minuteur résiduel', minuteurs.length, 0);
+
+  // --- 6. Une erreur de rechargement ne casse pas le planificateur.
+  let n = 0;
+  const erreurs: unknown[] = [];
+  plan = creerPlanificateur(
+    async () => { n++; if (n === 1) throw new Error('réseau'); },
+    { delai: 100, setTimer, clearTimer, onErreur: (e) => erreurs.push(e) }
+  );
+  plan.signaler();
+  await avancer(100); await tick();
+  plan.signaler();
+  await avancer(100); await tick();
+  eq('une erreur est remontée à onErreur', erreurs.length, 1);
+  eq('le rechargement suivant a bien lieu malgré l\'erreur précédente', n, 2);
+}
 
 // ============================================================================
 console.log(`\n${'─'.repeat(66)}`);

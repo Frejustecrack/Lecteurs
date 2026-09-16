@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { ROLE_LABELS, type Role } from '../lib/types';
 import { traduireErreur } from '../lib/errors';
+import { journaliser } from '../lib/journal';
 import {
   BtnPrimary,
   EyeToggle,
@@ -74,13 +75,8 @@ export default function Layout() {
     // Le log doit être écrit AVANT la fermeture de session : après, le jeton
     // n'existe plus et l'auteur de la déconnexion serait perdu.
     if (user) {
-      await supabase.rpc('log_action', {
-        p_action: 'compte.deconnexion',
-        p_objet_type: 'profiles',
-        p_objet_ref: user.id,
-        p_detail: JSON.stringify({
-          identifiant: profile?.username ?? user.email ?? user.phone ?? null,
-        }),
+      await journaliser('compte.deconnexion', undefined, undefined, {
+        identifiant: profile?.username ?? user.email ?? user.phone ?? null,
       });
     }
     await supabase.auth.signOut();

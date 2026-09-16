@@ -52,7 +52,11 @@ npm run dev            # http://localhost:5173
 | `npm run dev` | Vite dev + HMR (port 5173) |
 | `npm run build` | `tsc --noEmit` + bundle `dist/` |
 | `npm run preview` | sert `dist/` localement (port 4173) |
-| `npm run verif` | 91 tests logiques pures (sans DB) |
+| `npm run verif` | 105 tests logiques pures (dates, gel, recap, planificateur temps réel) |
+| `npm run verif:db` | PostgreSQL réel en mémoire : migrations rejouées depuis zéro + **RLS exercé rôle par rôle** + volumétrie 200 lecteurs |
+| `npm run verif:pdf` | génère les 7 PDF avec 200 lecteurs : portrait, « Pres / Abs », aucune colonne coupée (fichiers dans `tmp/pdf/`) |
+| `npm run verif:realtime` | vrai client Supabase × 5 postes contre un serveur Realtime local : filtres, rafales, démontage |
+| `npm run verif:all` | les quatre d'affilée |
 
 ## 2. Prérequis
 
@@ -100,20 +104,15 @@ Le schéma vit dans [`supabase/migrations/`](supabase/migrations) — **versionn
 | `20260914150700_fix_audit_trigger.sql` | `audit_trigger()` via `to_jsonb()` — plus de référence à `new.matricule` (bug qui bloquait **tous** les INSERT) |
 | `20260915120000_rename_grades_animation.sql` | Renommage des grades 5 et 6 (« Animation Grand I/II » → « Animation I/II ») |
 | `20260915180000_realtime_caisse_evenements.sql` | Publie `caisse_operations`, `evenements`, `evenement_participants` et `evenement_paiements` dans `supabase_realtime` (le Dashboard écoutait `caisse_operations` sans qu'elle soit publiée) |
+| `20260916120000_securite_journal_rls.sql` | **Journal infalsifiable** : `log_action` retirée aux comptes applicatifs, `journal_client()` sur liste blanche (connexion, déconnexion, export) avec auteur forcé à `auth.uid()` ; clôture/réouverture/suppression d'événement et correction gelée déduites par le trigger d'audit. **`WITH CHECK`** sur toutes les policies UPDATE. Policy `lecteurs_update_fraternite` (UPDATE libre) supprimée — le RPC `changer_fraternite` est la seule voie. Un compte **sans rôle** ne peut plus rien écrire (`a_un_role()`). Vues d'agrégats `v_caisse_totaux` / `v_cotisations_par_annee` + index (200 lecteurs). |
+
+> `20260914150300_clean_test_data.sql` est **neutralisée** (contenu `select 1`) : un `TRUNCATE` n'a pas sa place dans une migration — toute nouvelle instance l'aurait rejouée. Le script vit dans `supabase/scripts/clean_test_data.sql`.
 
 > Le commentaire d'en-tête de `20260913000000_initial_schema.sql` annonce « 13 tables » ;
 > le fichier en crée **14**. La migration étant déjà appliquée en production, elle n'est
 > volontairement **pas** modifiée (règle d'or ci-dessous) — la correction est portée ici.
 
-Si l'intégration Git n'a pas encore appliqué ces migrations, coller dans le **SQL Editor** (idempotents, contenu identique) :
-
-| Script manuel | Équivalent |
-|---|---|
-| [`supabase/fix_audit_trigger_manual.sql`](supabase/fix_audit_trigger_manual.sql) | `14150700` — **à exécuter en priorité** |
-| [`supabase/fix_rls_manual.sql`](supabase/fix_rls_manual.sql) | `14150200` (contrainte de rôle) + `14150500` |
-| [`supabase/fix_fraternite_manual.sql`](supabase/fix_fraternite_manual.sql) | `14150600` |
-| [`supabase/rename_grades_animation_manual.sql`](supabase/rename_grades_animation_manual.sql) | `15120000` (renommage grades) |
-| [`supabase/realtime_caisse_evenements_manual.sql`](supabase/realtime_caisse_evenements_manual.sql) | `15180000` (temps réel caisse + événements) |
+Il n'y a **qu'un seul** mécanisme d'application : `supabase/migrations/`. Si l'intégration Git n'est pas connectée, exécuter les fichiers de `migrations/` dans l'ordre chronologique dans le SQL Editor (tous idempotents). `npm run verif:db` garantit que la séquence complète s'applique depuis une base vide.
 
 **Synchronisation GitHub → Supabase (intégration officielle) :**
 Dashboard Supabase → **Settings → Integrations → GitHub** → Connecter `Frejustecrack/Lecteurs` sur la branche `main`. Chaque nouveau fichier `supabase/migrations/*.sql` poussé sur `main` est appliqué automatiquement.
@@ -167,7 +166,7 @@ select public.set_role('UUID', 'admin', 'Nom Prénom');
 -- rôles : admin | co | co_paroissial | caissier | responsable
 ```
 
-Le fichier [`supabase/seed-comptes.sql`](supabase/seed-comptes.sql) permet de le faire en lot. `set_role` est `SECURITY DEFINER` et **révoquée** pour `anon`/`authenticated` — seuls `postgres`/`supabase_admin` peuvent l'appeler depuis le SQL Editor.
+Le fichier [`supabase/scripts/seed-comptes.sql`](supabase/scripts/seed-comptes.sql) permet de le faire en lot. `set_role` est `SECURITY DEFINER` et **révoquée** pour `anon`/`authenticated` — seuls `postgres`/`supabase_admin` peuvent l'appeler depuis le SQL Editor.
 
 Recommandé : **Authentication → Settings** → désactiver *Enable email signups*.
 
@@ -235,21 +234,21 @@ src/
 │  └─ ui.tsx             Btn* (dont BtnDangerGhost), Badge, StatCard, Modal, Field, Segmented, EyeToggle, StepNav…
 ├─ pages/                12 pages, une par module
 └─ pdf/
-   ├─ export.ts          jsPDF + autoTable (7 exports, adaptatifs portrait/paysage)
+   ├─ export.ts          jsPDF + autoTable (7 exports, tous A4 portrait)
    └─ headerAssets.ts    logos officiels base64 (CDLJ + Sainte Famille)
 
 supabase/
-├─ migrations/           *.sql versionnés, appliqués auto par Supabase
-├─ seed-comptes.sql      set_role en lot (une fois)
-├─ clean_test_data_manual.sql      script manuel pour remise à zéro
-├─ fix_rls_manual.sql              is_co bivalent + clôture événement (SQL Editor)
-├─ fix_fraternite_manual.sql       changer_fraternite (SQL Editor)
-├─ fix_audit_trigger_manual.sql    audit jsonb (SQL Editor)
-├─ rename_grades_animation_manual.sql renommage grades Animation I/II (SQL Editor)
-├─ realtime_caisse_evenements_manual.sql temps réel caisse + événements (SQL Editor)
+├─ migrations/           *.sql versionnés, appliqués auto par Supabase — SEULE source de vérité
+├─ scripts/
+│  ├─ seed-comptes.sql      set_role en lot (une fois, SQL Editor)
+│  └─ clean_test_data.sql   remise à zéro (une fois, SQL Editor — jamais en migration)
 └─ README.md             détail migrations
 
-scripts/verif.ts         91 vérifications logiques pures (sans DB)
+scripts/
+├─ verif.ts              105 vérifications logiques pures (sans DB)
+├─ verif-db.mjs          PostgreSQL réel (PGlite) : migrations + RLS par rôle + 200 lecteurs
+├─ verif-pdf.mjs         7 PDF générés avec 200 lecteurs (portrait, Pres/Abs, largeur)
+└─ verif-realtime.mjs    synchronisation temps réel bout en bout (vrai client, 5 postes)
 .github/workflows/ci.yml typage + logique + build + syntaxe SQL à chaque PR
 ```
 
@@ -318,7 +317,7 @@ Les 8 tables publiées dans `supabase_realtime` sont : `presences`, `cotisations
   VITE_SUPABASE_PUBLISHABLE_KEY=...
   ```
 - SPA : [`public/_redirects`](public/_redirects) contient déjà `/* /index.html 200`. Vite copie `public/` dans `dist/`, Cloudflare Pages le lit au déploiement : sans ce fichier, un rafraîchissement sur `/lecteurs/:id` ou `/evenements/:id` renvoie une 404.
-- Icônes : `public/favicon.svg` (navigateurs récents) et `public/logo-cdlj.jpg` (repli + `apple-touch-icon`) — référencés dans `index.html`, copiés tels quels dans `dist/`.
+- Icônes : `public/favicon.svg` (navigateurs récents) et `src/assets/logo-cdlj.jpg` (repli + `apple-touch-icon`, référencé dans `index.html` et émis par Vite dans `dist/assets/`).
 
 **Supabase** : connecter le repo (Settings → Git) sur `main` pour que les migrations s'appliquent auto. Sinon exécuter les fichiers `supabase/migrations/*.sql` manuellement dans le SQL Editor, dans l'ordre chronologique.
 
@@ -326,9 +325,7 @@ Les 8 tables publiées dans `supabase_realtime` sont : `presences`, `cotisations
 
 Pour livrer avec **tous les compteurs à 0** tout en conservant les comptes et le paramétrage :
 
-**Option A — automatique (recommandé, via Git) :** merger la PR contenant `20260914150300_clean_test_data.sql` sur `main` → Supabase l'applique et tronque `presences, cotisations, evenements, lecteurs, fraternites, logs…` (cascade) et remet `montant_cotisation` à 50.
-
-**Option B — manuelle :** dans Supabase **SQL Editor**, exécutez `supabase/clean_test_data_manual.sql` (même contenu que la migration) **une seule fois** :
+Dans Supabase **SQL Editor**, exécutez `supabase/scripts/clean_test_data.sql` **une seule fois**. Ce script n'est volontairement **pas** une migration : une migration est rejouée sur toute nouvelle instance.
 
 ```sql
 truncate table public.evenement_paiements, public.evenement_participants,
@@ -346,12 +343,19 @@ Vérification : `select count(*) from public.lecteurs;` doit être 0, le prochai
 ## 14. Vérifications & qualité
 
 ```bash
-npm run verif    # 91 tests : samedis, gel, samedisArrives, validation années, erreurs, recap Suivis
-npm run build    # tsc --noEmit + vite build (échoue si une erreur de typage)
-npx tsc --noEmit # typage seul
+npm run verif           # 105 tests : samedis, gel, recap Suivis, planificateur temps réel
+npm run verif:db        # migrations depuis zéro + RLS par rôle + 200 lecteurs × 52 samedis
+npm run verif:pdf       # 7 PDF, 200 lecteurs : portrait, Pres/Abs, aucune colonne coupée
+npm run verif:realtime  # 5 postes, vrai client supabase-js, filtres, rafales, démontage
+npm run verif:all       # tout
+npm run build           # tsc --noEmit + vite build
 ```
 
-Le script `scripts/verif.ts` importe le **vrai** code de `src/lib/` (pas une copie) — toute régression y fait échouer la vérification.
+Tous ces scripts importent le **vrai** code de `src/` (pas une copie) — toute régression y fait échouer la vérification.
+
+- `verif-db.mjs` démarre un **PostgreSQL réel** (PGlite, WebAssembly, rien à installer), rejoue les migrations dans l'ordre depuis une base vide, puis se fait passer pour chaque rôle (`set role authenticated` + claim JWT) et vérifie une centaine de règles : gel, cotisations réservées au Caissier, cycle de vie des événements, journal infalsifiable, matricules, cascade, agrégats.
+- `verif-pdf.mjs` génère les 7 documents avec 200 lecteurs et vérifie format A4 portrait, présence de « Pres » / « Abs », pagination, et qu'aucune colonne ne déborde. Les fichiers sont dans `tmp/pdf/` pour contrôle visuel.
+- `verif-realtime.mjs` lance un serveur Realtime local (protocole Phoenix) branché sur les triggers de la base, ouvre 5 « postes » qui montent le **vrai** hook `useRealtime` avec le **vrai** client supabase-js, et vérifie que chaque page ne se recharge que pour ce qui la concerne (filtres `event_id=eq.…`), qu'une rafale de 200 écritures ne provoque qu'**un** rechargement, jamais deux superposés, et qu'une page fermée ne recharge plus rien.
 
 ### Intégration continue
 
@@ -359,8 +363,8 @@ Le script `scripts/verif.ts` importe le **vrai** code de `src/lib/` (pas une cop
 
 | Job | Étapes |
 |---|---|
-| **app** | `npm ci` → `tsc --noEmit` → `npm run verif` → `npm run build` (Node 22.18, requis par le *type stripping*) |
-| **sql** | `pip install pglast` → parsing PostgreSQL de **tous** les fichiers `supabase/**/*.sql` |
+| **app** | `npm ci` → `tsc --noEmit` → `verif` → `verif:db` → `verif:pdf` → `verif:realtime` → `build` (Node 22.18) |
+| **sql** | `pip install pglast` → parsing PostgreSQL de `supabase/migrations/*.sql` et `supabase/scripts/*.sql` |
 
 Le job **sql** existe parce qu'un fichier invalide bloque toute la chaîne : dès le push sur `main`, Supabase tente d'appliquer la migration. Mieux vaut le savoir avant.
 
@@ -374,7 +378,7 @@ python3 -c "import pglast,sys; pglast.parse_sql(open(sys.argv[1]).read()); print
 
 ### Ce que la CI ne couvre pas
 
-Aucun test n'exécute les composants React ni le rendu : le typage et `verif.ts` ne voient pas une classe CSS cassée ni une incohérence de droits entre l'interface et le RLS. Avant de merger une modification d'interface, ouvrir la page concernée sur un téléphone (ou en responsive 375 px).
+Le rendu visuel des pages React (classes CSS, responsive) n'est pas testé automatiquement ; les droits, eux, le sont côté base (`verif:db`). Avant de merger une modification d'interface, ouvrir la page concernée sur un téléphone (ou en responsive 375 px).
 
 ## 15. Dépannage
 
@@ -383,9 +387,9 @@ Aucun test n'exécute les composants React ni le rendu : le typage et `verif.ts`
 - **Présence gelée** → seul Admin peut corriger un samedi `< dernier_samedi()`.
 - **Matricule déjà pris** → `LEC…` unique, ne jamais le forcer manuellement.
 - **Realtime ne se déclenche pas** → vérifier que `supabase_realtime` contient bien la table (migration `20260914150100`) et que le projet Supabase a Realtime activé (Database → Realtime).
-- **Clôturer un événement échoue (RLS)** → appliquer `20260914150500` (ou `fix_rls_manual.sql`). Sans `WITH CHECK`, le CO ne peut pas passer un événement à `termine`.
-- **INSERT impossible (`record "new" has no field "matricule"`)** → appliquer `20260914150700` (ou `fix_audit_trigger_manual.sql`) **en priorité**. Sans ce correctif, aucun insert ne passe sur `fraternites` / `lecteurs` / `presences` / `cotisations` / `evenements`.
-- **Changer la fraternité refusé / fonction introuvable** → appliquer `20260914150600` (ou `fix_fraternite_manual.sql`). L'app retombe sur un UPDATE direct si le RPC n'existe pas encore (`42883` / `PGRST202`).
+- **Une action est refusée alors que le rôle devrait l'avoir** → vérifier que **toutes** les migrations sont appliquées (Dashboard → Database → Migrations). `npm run verif:db` reproduit la séquence complète en local.
+- **Compte connecté mais « en attente d'activation »** → aucun rôle dans `profiles` : l'Admin l'attribue (Administration → Comptes). Sans rôle, aucune écriture n'est possible en base.
+- **Journal : `Action non journalisable depuis le client`** → seules `compte.connexion`, `compte.deconnexion` et `export.pdf` passent par `journal_client`. Tout le reste est écrit par les triggers.
 
 ---
 

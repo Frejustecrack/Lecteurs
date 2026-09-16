@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import { fmtDate, fmtDateHeure, fmtMoney, pct } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
+import { journaliserExport } from '../lib/journal';
 import {
   estAdmin,
   estCO,
@@ -115,26 +117,12 @@ export default function EvenementDetail() {
    * caisse arrive ici sans rechargement.
    * (Tables publiées par la migration 20260915180000.)
    */
-  useEffect(() => {
-    const channel = supabase
-      .channel(`realtime-evenement-${id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'evenement_participants' }, () => load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'evenement_paiements' }, () => load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'caisse_operations' }, () => load())
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'evenements' }, () => load())
-      .subscribe();
-    const onFocus = () => load();
-    const onVis = () => {
-      if (document.visibilityState === 'visible') load();
-    };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVis);
-      supabase.removeChannel(channel);
-    };
-  }, [load, id]);
+  useRealtime(`realtime-evenement-${id}`, [
+    { table: 'evenement_participants', filter: `event_id=eq.${id}` },
+    { table: 'evenement_paiements', filter: `event_id=eq.${id}` },
+    { table: 'caisse_operations', filter: `event_id=eq.${id}` },
+    { table: 'evenements', filter: `id=eq.${id}` },
+  ], load);
 
   /** Paiements et opérations triés du plus récent au plus ancien. */
   const paiementsTri = useMemo(
@@ -347,12 +335,7 @@ export default function EvenementDetail() {
     setBusyStatut(false);
     if (error) toast(traduireErreur(error, 'réouvrir cet événement'), 'err');
     else {
-      await supabase.rpc('log_action', {
-        p_action: 'evenement.reouverture',
-        p_objet_type: 'evenements',
-        p_objet_ref: e.id,
-        p_detail: JSON.stringify({ nom: e.nom }),
-      });
+      // Journalisé en base par le trigger d'audit (action « evenement.reouverture »).
       toast('L\'événement a été réouvert.');
       load();
     }
@@ -372,12 +355,7 @@ export default function EvenementDetail() {
       toast(traduireErreur(error, "supprimer cet événement"), 'err');
       return;
     }
-    await supabase.rpc('log_action', {
-      p_action: 'evenement.suppression',
-      p_objet_type: 'evenements',
-      p_objet_ref: e.id,
-      p_detail: JSON.stringify({ nom: e.nom }),
-    });
+    // Journalisé en base par le trigger d'audit (action « evenement.suppression »).
     toast('L\'événement a été supprimé.');
     navigate('/evenements');
   }
@@ -463,12 +441,7 @@ export default function EvenementDetail() {
         soldeCaisse,
         auteur: profile?.full_name ?? '—',
       });
-      await supabase.rpc('log_action', {
-        p_action: 'export.pdf',
-        p_objet_type: 'evenements',
-        p_objet_ref: e.id,
-        p_detail: JSON.stringify({ document: 'bilan_evenement', nom: e.nom }),
-      });
+      await journaliserExport('evenements', e.id, { document: 'bilan_evenement', nom: e.nom });
       toast('Le bilan PDF a été généré.');
     } catch (err) {
       toast(traduireErreur(err, 'générer le bilan PDF de cet événement'), 'err');

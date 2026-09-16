@@ -13,6 +13,7 @@ import {
   YAxis,
 } from 'recharts';
 import { supabase } from '../lib/supabase';
+import { useRealtime } from '../lib/useRealtime';
 import {
   dateISO,
   fmtMoney,
@@ -56,24 +57,7 @@ export default function Dashboard() {
   }, []);
 
   // Synchronisation temps réel : toute modif de présence/cotisation/lecteur recharge le tableau de bord
-  useEffect(() => {
-    const ch = supabase
-      .channel('realtime-dashboard')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'presences' }, () => load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'cotisations' }, () => load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'lecteurs' }, () => load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'caisse_operations' }, () => load())
-      .subscribe();
-    const onFocus = () => load();
-    const onVis = () => { if (document.visibilityState === 'visible') load(); };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVis);
-      supabase.removeChannel(ch);
-    };
-  }, []);
+  useRealtime('realtime-dashboard', ['presences', 'cotisations', 'lecteurs', 'caisse_operations', 'evenements', 'evenement_paiements'], load);
 
   async function load() {
     const now = new Date();
@@ -81,18 +65,24 @@ export default function Dashboard() {
     const m = now.getMonth();
     const debut6 = dateISO(new Date(am, m - 5, 1));
 
-    const [rLecteurs, rPres, rCot, rEven, rOps, rPaiements] = await Promise.all([
-      supabase.from('lecteurs').select('*'),
+    // Dimensionné pour 200+ lecteurs : on ne rapatrie que la fenêtre affichée
+    // (6 mois) ; le solde global vient d'agrégats calculés par la base
+    // (vue v_caisse_totaux) et non d'un chargement intégral des cotisations.
+    const [rLecteurs, rPres, rCot, rEven, rTotaux, rPaiements] = await Promise.all([
+      supabase
+        .from('lecteurs')
+        .select('id, archived, archived_at, created_at, fraternite_id, grade_id, matricule, nom, prenom'),
       supabase
         .from('presences')
         .select('lecteur_id, date_samedi, statut')
         .gte('date_samedi', debut6),
-      supabase.from('cotisations').select('lecteur_id, date_samedi, paye, montant, paid_at'),
-      supabase.from('evenements').select('*').eq('statut', 'en_cours'),
       supabase
-        .from('caisse_operations')
-        .select('montant, type')
-        .is('event_id', null),
+        .from('cotisations')
+        .select('lecteur_id, date_samedi, paye, montant, paid_at')
+        .eq('paye', true)
+        .or(`date_samedi.gte.${debut6},paid_at.gte.${debut6}`),
+      supabase.from('evenements').select('*').eq('statut', 'en_cours'),
+      supabase.from('v_caisse_totaux').select('*').maybeSingle(),
       supabase.from('evenement_paiements').select('event_id, montant'),
     ]);
 
@@ -109,7 +99,11 @@ export default function Dashboard() {
       paid_at: string | null;
     }[];
     const even = (rEven.data ?? []) as Evenement[];
-    const ops = (rOps.data ?? []) as { montant: number; type: string }[];
+    const totaux = (rTotaux.data ?? null) as {
+      total_cotisations: number;
+      total_encaissements: number;
+      total_decaissements: number;
+    } | null;
     const paiements = (rPaiements.data ?? []) as { event_id: string; montant: number }[];
 
     // ---- KPIs mois courant
@@ -125,11 +119,11 @@ export default function Dashboard() {
     );
     const lecteursPayes = new Set(cotMois.map((c) => c.lecteur_id)).size;
 
-    const soldeCot = cots.filter((c) => c.paye).reduce((s, c) => s + c.montant, 0);
-    const soldeOps = ops.reduce(
-      (s, o) => s + (o.type === 'encaissement' ? o.montant : -o.montant),
-      0
-    );
+    const caisseSolde = totaux
+      ? Number(totaux.total_cotisations) +
+        Number(totaux.total_encaissements) -
+        Number(totaux.total_decaissements)
+      : 0;
 
     setKpi({
       actifs: actifs.length,
@@ -137,7 +131,7 @@ export default function Dashboard() {
       presenceMoyenne:
         samedis.length > 0 ? Math.round((nbPresent / samedis.length) * 10) / 10 : 0,
       tauxCotisation: pct(lecteursPayes, actifs.length),
-      caisseSolde: soldeCot + soldeOps,
+      caisseSolde,
       evenementsEnCours: even.length,
       samedisMois: samedis.length,
     });

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import {
   dateISO,
   deplaceMois,
-  estGelee,
   fmtDate,
   fmtDateHeure,
   fmtMoney,
@@ -42,6 +42,7 @@ import {
   useToast,
 } from '../components/ui';
 import { traduireErreur } from '../lib/errors';
+import { journaliserExport } from '../lib/journal';
 import {
   anneeCourante,
   bornesAnneeAdhesion,
@@ -194,26 +195,11 @@ export default function LecteurProfil() {
   }, [load]);
 
   // Synchronisation temps réel : si la présence de ce lecteur est modifiée ailleurs, la fiche se met à jour
-  useEffect(() => {
-    if (!id) return;
-    const channel = supabase
-      .channel(`realtime-profil-${id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'presences', filter: `lecteur_id=eq.${id}` }, () => load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'cotisations', filter: `lecteur_id=eq.${id}` }, () => load())
-      // La fiche elle-même : un changement de fraternité fait ailleurs
-      // (mobile, autre poste) se répercute ici sans rechargement manuel.
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'lecteurs', filter: `id=eq.${id}` }, () => load())
-      .subscribe();
-    const onFocus = () => load();
-    const onVis = () => { if (document.visibilityState === 'visible') load(); };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVis);
-      supabase.removeChannel(channel);
-    };
-  }, [id, load]);
+  useRealtime(`realtime-profil-${id}`, [
+    { table: 'presences', filter: `lecteur_id=eq.${id}` },
+    { table: 'cotisations', filter: `lecteur_id=eq.${id}` },
+    { table: 'lecteurs', event: 'UPDATE', filter: `id=eq.${id}` },
+  ], load);
 
   // Le select de fraternité suit la fiche chargée (y compris après un
   // rafraîchissement temps réel déclenché par une modification externe).
@@ -367,13 +353,10 @@ export default function LecteurProfil() {
    * Changement de fraternité — autorisé à TOUS les rôles (cahier des charges :
    * information de vie de groupe, pas une donnée administrative).
    *
-   * Voie principale : la fonction SECURITY DEFINER `changer_fraternite`
+   * Passe exclusivement par la fonction SECURITY DEFINER `changer_fraternite`
    * (migration 20260914150600) qui valide la cible et journalise l'action.
-   * Repli : si la fonction n'est pas encore appliquée sur la base, on tente
-   * l'UPDATE direct de la seule colonne `fraternite_id` — autorisé par la
-   * policy `lecteurs_update_fraternite` et filtré par le trigger
-   * `check_lecteur_update`, qui interdit à un rôle non Admin/CO de toucher à
-   * toute autre colonne.
+   * L'UPDATE direct de la table n'est plus ouvert aux rôles non Admin/CO
+   * (migration 20260916120000).
    */
   async function changerFraternite() {
     if (!l || !id) return;
@@ -385,26 +368,10 @@ export default function LecteurProfil() {
       p_fraternite: cible,
     });
 
-    // 42883 = undefined_function, PGRST202 = fonction absente du schéma PostgREST
-    const fonctionAbsente =
-      !!error && (error.code === '42883' || error.code === 'PGRST202');
-
-    if (error && !fonctionAbsente) {
+    if (error) {
       setBusyFrat(false);
       toast(traduireErreur(error, 'changer la fraternité'), 'err');
       return;
-    }
-
-    if (fonctionAbsente) {
-      const { error: errDirect } = await supabase
-        .from('lecteurs')
-        .update({ fraternite_id: cible, updated_at: new Date().toISOString() })
-        .eq('id', id);
-      if (errDirect) {
-        setBusyFrat(false);
-        toast(traduireErreur(errDirect, 'changer la fraternité'), 'err');
-        return;
-      }
     }
 
     setBusyFrat(false);
@@ -469,12 +436,7 @@ export default function LecteurProfil() {
         auteur: profile?.full_name ?? '—',
         montantCot,
       });
-      await supabase.rpc('log_action', {
-        p_action: 'export.pdf',
-        p_objet_type: 'lecteur',
-        p_objet_ref: l.matricule,
-        p_detail: JSON.stringify({ document: 'fiche_individuelle' }),
-      });
+      await journaliserExport('lecteur', l.matricule, { document: 'fiche_individuelle' });
       toast('PDF généré.');
     } catch (e) {
       toast(traduireErreur(e, 'générer la fiche PDF de ce lecteur'), 'err');

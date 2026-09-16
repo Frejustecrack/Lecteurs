@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import { fmtDate, fmtMoney } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
@@ -67,24 +68,7 @@ export default function Evenements() {
    * changent ailleurs est reflété ici sans rechargement manuel.
    * (Tables publiées par la migration 20260915180000.)
    */
-  useEffect(() => {
-    const channel = supabase
-      .channel('realtime-evenements')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'evenements' }, () => load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'evenement_participants' }, () => load())
-      .subscribe();
-    const onFocus = () => load();
-    const onVis = () => {
-      if (document.visibilityState === 'visible') load();
-    };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVis);
-      supabase.removeChannel(channel);
-    };
-  }, [load]);
+  useRealtime('realtime-evenements', ['evenements', 'evenement_participants'], load);
 
   function openCreate() {
     if (!isCO) {
@@ -97,18 +81,6 @@ export default function Evenements() {
       date_evenement: new Date().toISOString().slice(0, 10),
       lieu: '',
       montant_participation: '',
-    });
-    setFormOpen(true);
-  }
-
-  function openEdit(e: Evenement) {
-    if (!canManage || e.statut === 'termine') return;
-    setEditId(e.id);
-    setForm({
-      nom: e.nom,
-      date_evenement: e.date_evenement,
-      lieu: e.lieu ?? '',
-      montant_participation: String(e.montant_participation),
     });
     setFormOpen(true);
   }
