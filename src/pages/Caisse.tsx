@@ -82,13 +82,17 @@ export default function Caisse() {
     const d1 = dateISO(new Date(annee, mois, 1));
     const d2 = dateISO(new Date(annee, mois + 1, 0));
     const [rCM, rTot, rAn, rO, rL, rP] = await Promise.all([
-      // mois affiché : <1000 lignes (200 lecteurs max × ~4 samedis)
-      supabase
-        .from('cotisations')
-        .select(COLONNES_COT)
-        .eq('paye', true)
-        .gte('date_samedi', d1)
-        .lte('date_samedi', d2),
+      // mois affiché : 200 lecteurs × 5 samedis = 1000 pile la limite PostgREST → paginé
+      toutesLesLignes<Cotisation>((de, a) =>
+        supabase
+          .from('cotisations')
+          .select(COLONNES_COT)
+          .eq('paye', true)
+          .gte('date_samedi', d1)
+          .lte('date_samedi', d2)
+          .order('id')
+          .range(de, a)
+      ),
       // Solde général et cumul annuel : agrégats calculés par la base
       // (vues v_caisse_totaux / v_cotisations_par_annee) — jamais l'historique
       // complet des cotisations dans le navigateur (200 lecteurs × 52 samedis).

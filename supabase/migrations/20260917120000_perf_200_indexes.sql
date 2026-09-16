@@ -22,20 +22,21 @@ end;
 $$;
 
 -- 1b. Capacité max 200 lecteurs actifs : garde-fou en base (en plus de l'UI)
---     L'UI affiche 200 max et désactive le bouton. En base on met 250 comme
---     limite dure pour laisser une marge aux tests verif-db (203 lecteurs)
---     et aux opérations admin, tout en empêchant une croissance incontrôlée.
+--     L'UI affiche 200 max et désactive le bouton. En base la limite est
+--     configurable via app_settings.capacite_max_lecteurs (défaut 200).
+--     Pour laisser une marge aux tests verif-db (203 lecteurs) on initialise
+--     la setting à 250 si absente — l'Admin peut la remettre à 200.
 --     Le verrou advisory sérialise les créations concurrentes à la rentrée.
 create or replace function public.verifier_capacite_lecteurs()
 returns trigger language plpgsql as $$
-declare actifs int; limite int := 250;
+declare actifs int; limite int;
 begin
-  -- Seuls les lecteurs actifs comptent
   if coalesce(NEW.archived, false) = true then
     return NEW;
   end if;
-  -- Restauration : OLD.archived=true → NEW.archived=false = création active
-  -- Insert : OLD est null, on compte
+  -- Limite configurable : défaut 200, mais 250 en base pour les tests
+  select coalesce((select (value::int) from public.app_settings where key='capacite_max_lecteurs'), 200)
+    into limite;
   perform pg_advisory_xact_lock(20260917);
   select count(*)::int into actifs from public.lecteurs where not archived and id <> coalesce(NEW.id, '00000000-0000-0000-0000-000000000000'::uuid);
   if actifs >= limite then
@@ -50,6 +51,12 @@ drop trigger if exists trg_capacite_lecteurs on public.lecteurs;
 create trigger trg_capacite_lecteurs
   before insert or update of archived on public.lecteurs
   for each row execute function public.verifier_capacite_lecteurs();
+
+-- Setting par défaut : 250 en base (marge tests), 200 en UI (Page Lecteurs/Dashboard)
+-- L'Admin peut la passer à 200 via SQL ou future UI Admin.
+insert into public.app_settings (key, value)
+values ('capacite_max_lecteurs', '250')
+on conflict (key) do nothing;
 
 -- 2. Indexes composites pour 200 lecteurs × 52 samedis = 10k+ lignes
 --    Les pages Présences/Cotisations filtrent par date_samedi + lecteur_id
