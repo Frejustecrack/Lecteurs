@@ -81,10 +81,15 @@ export default function Lecteurs() {
 
   const load = useCallback(async () => {
     const [rL, rF, rG] = await Promise.all([
+      // 200 max : on charge tout, mais on évite le `select *` trop large
       toutesLesLignes<Lecteur>((de, a) =>
-        supabase.from('lecteurs').select('*').order('matricule').range(de, a)
+        supabase
+          .from('lecteurs')
+          .select('id, matricule, nom, prenom, grade_id, fraternite_id, annee_adhesion, archived, archived_at, contact_parent')
+          .order('matricule')
+          .range(de, a)
       ),
-      supabase.from('fraternites').select('*').order('nom'),
+      supabase.from('fraternites').select('id, nom').order('nom'),
       supabase.from('grades').select('*').order('id'),
     ]);
     setLecteurs((rL.data ?? []) as Lecteur[]);
@@ -257,6 +262,10 @@ export default function Lecteurs() {
 
   if (loading) return <Spinner label="Chargement des lecteurs…" />;
 
+  const actifsCount = lecteurs.filter((l) => !l.archived).length;
+  const capaciteMax = 200;
+  const plein = actifsCount >= capaciteMax;
+
   const gradeNom = (id: number) => grades.find((g) => g.id === id)?.nom ?? '—';
   const fraterniteNom = (id: string | null) =>
     fraternites.find((f) => f.id === id)?.nom ?? '—';
@@ -265,7 +274,7 @@ export default function Lecteurs() {
     <div>
       <PageHeader
         title="Lecteurs"
-        sub={`${lecteurs.filter((l) => !l.archived).length} lecteur(s) actif(s)`}
+        sub={`${actifsCount} lecteur(s) actif(s) / ${capaciteMax} max${plein ? ' — capacité atteinte' : ''}`}
         actions={
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
             <BtnGhost
@@ -282,12 +291,17 @@ export default function Lecteurs() {
             >
               ⬇ Export PDF ({filtered.length})
             </BtnGhost>
-            <BtnPrimary onClick={openCreate} className="w-full sm:w-auto">
+            <BtnPrimary onClick={openCreate} disabled={plein} title={plein ? `Capacité maximale ${capaciteMax} atteinte` : undefined} className="w-full sm:w-auto">
               + Nouveau lecteur
             </BtnPrimary>
           </div>
         }
       />
+      {plein && (
+        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Capacité maximale de {capaciteMax} lecteurs actifs atteinte. Archivez un lecteur avant d'en créer un nouveau.
+        </div>
+      )}
 
       {/*
         Filtres — ordre demandé : fraternités, PUIS grade, PUIS recherche.

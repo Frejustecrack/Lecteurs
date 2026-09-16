@@ -234,11 +234,12 @@ export default function LecteurProfil() {
     [cotisations]
   );
 
-  // ---- récap annuel (12 derniers mois)
+  // ---- récap annuel (12 derniers mois) - optimisé pour 200 lecteurs
   const recapAnnuel = useMemo(() => {
     const rows: { label: string; present: number; absent: number; nonSaisi: number }[] = [];
+    const ref = new Date();
     for (let i = 11; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const d = new Date(ref.getFullYear(), ref.getMonth() - i, 1);
       const sam = samedisDuMois(d.getFullYear(), d.getMonth()).map(dateISO);
       const pres = presences.filter((p) => sam.includes(p.date_samedi));
       rows.push({
@@ -249,7 +250,7 @@ export default function LecteurProfil() {
       });
     }
     return rows;
-  }, [presences, now]);
+  }, [presences]);
 
   if (loading || !l) return <Spinner label="Chargement de la fiche…" />;
 
@@ -331,15 +332,18 @@ export default function LecteurProfil() {
       return;
     }
     setBusyEdit(true);
-    const { error } = await supabase.from('lecteurs').update({
-      nom: form.nom.trim(),
-      prenom: form.prenom.trim(),
-      date_naissance: form.date_naissance || null,
-      annee_adhesion: form.annee_adhesion ? Number(form.annee_adhesion) : null,
-      fraternite_id: form.fraternite_id || null,
-      adresse: form.adresse.trim() || null,
-      contact_parent: form.contact_parent.trim() || null,
-    });
+    const { error } = await supabase
+      .from('lecteurs')
+      .update({
+        nom: form.nom.trim(),
+        prenom: form.prenom.trim(),
+        date_naissance: form.date_naissance || null,
+        annee_adhesion: form.annee_adhesion ? Number(form.annee_adhesion) : null,
+        fraternite_id: form.fraternite_id || null,
+        adresse: form.adresse.trim() || null,
+        contact_parent: form.contact_parent.trim() || null,
+      })
+      .eq('id', l.id);
     setBusyEdit(false);
     if (error) toast(traduireErreur(error, 'mettre à jour cette fiche'), 'err');
     else {

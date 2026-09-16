@@ -122,13 +122,18 @@ export default function Suivis() {
   const periodeLabel =
     mode === 'semaine' ? semaineLabel(semaine) : moisLabel(annee, mois);
 
-  // ------------------------------------------------------------ chargement
+  // ------------------------------------------------------------ chargement - optimisé 200 max
   const load = useCallback(async () => {
     const [rL, rF] = await Promise.all([
       toutesLesLignes<Lecteur>((de, a) =>
-        supabase.from('lecteurs').select('*').eq('archived', false).order('matricule').range(de, a)
+        supabase
+          .from('lecteurs')
+          .select('id, matricule, nom, prenom, fraternite_id, archived')
+          .eq('archived', false)
+          .order('matricule')
+          .range(de, a)
       ),
-      supabase.from('fraternites').select('*').order('nom'),
+      supabase.from('fraternites').select('id, nom').order('nom'),
     ]);
     setLecteurs((rL.data ?? []) as Lecteur[]);
     setFraternites((rF.data ?? []) as Fraternite[]);

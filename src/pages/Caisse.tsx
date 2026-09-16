@@ -162,14 +162,16 @@ export default function Caisse() {
   const lignes: Ligne[] = useMemo(() => {
     const moisDebut = dateISO(new Date(annee, mois, 1));
     const moisFin = dateISO(new Date(annee, mois + 1, 0, 23, 59));
+    const mapLect = new Map(lecteurs.map((l) => [l.id, l.matricule]));
+    const mapProf = new Map(profiles.map((p) => [p.id, p.full_name ?? '—']));
     const cots: Ligne[] = cotsMois
       .filter((c) => c.date_samedi >= moisDebut && c.date_samedi <= moisFin)
       .map((c) => ({
         date: c.date_samedi,
         type: 'cotisation' as const,
-        libelle: `Cotisation — ${matriculeDe(c.lecteur_id)}`,
+        libelle: `Cotisation — ${mapLect.get(c.lecteur_id) ?? '—'}`,
         montant: c.montant,
-        auteur: auteurName(c.recorded_by),
+        auteur: mapProf.get(c.recorded_by ?? '') ?? '—',
       }));
     const opsLignes: Ligne[] = ops
       .filter((o) => {
@@ -181,10 +183,9 @@ export default function Caisse() {
         type: o.type,
         libelle: `${o.type === 'encaissement' ? 'Encaissement' : 'Décaissement'} — ${o.motif}`,
         montant: o.montant,
-        auteur: auteurName(o.recorded_by),
+        auteur: mapProf.get(o.recorded_by ?? '') ?? '—',
       }));
     return [...cots, ...opsLignes].sort((a, b) => (a.date < b.date ? 1 : -1));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cotsMois, ops, lecteurs, profiles, annee, mois]);
 
   async function ajouterOp() {
