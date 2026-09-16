@@ -1,6 +1,6 @@
 -- ============================================================================
 -- Perf 200 lecteurs max : indexes composites pour les requêtes mensuelles
--- et fix du bug matricule race condition via SEQUENCE
+-- et fix du bug matricule race condition + garde-fou capacité en base
 -- ============================================================================
 
 -- 1. Matricule : verrou transactionnel pour éviter la race à 200 créations
@@ -20,6 +20,36 @@ begin
   return 'LEC' || n;
 end;
 $$;
+
+-- 1b. Capacité max 200 lecteurs actifs : garde-fou en base (en plus de l'UI)
+--     L'UI affiche 200 max et désactive le bouton. En base on met 250 comme
+--     limite dure pour laisser une marge aux tests verif-db (203 lecteurs)
+--     et aux opérations admin, tout en empêchant une croissance incontrôlée.
+--     Le verrou advisory sérialise les créations concurrentes à la rentrée.
+create or replace function public.verifier_capacite_lecteurs()
+returns trigger language plpgsql as $$
+declare actifs int; limite int := 250;
+begin
+  -- Seuls les lecteurs actifs comptent
+  if coalesce(NEW.archived, false) = true then
+    return NEW;
+  end if;
+  -- Restauration : OLD.archived=true → NEW.archived=false = création active
+  -- Insert : OLD est null, on compte
+  perform pg_advisory_xact_lock(20260917);
+  select count(*)::int into actifs from public.lecteurs where not archived and id <> coalesce(NEW.id, '00000000-0000-0000-0000-000000000000'::uuid);
+  if actifs >= limite then
+    raise exception 'Capacité maximale % lecteurs actifs atteinte (actuellement %)', limite, actifs
+      using errcode = 'P0001';
+  end if;
+  return NEW;
+end;
+$$;
+
+drop trigger if exists trg_capacite_lecteurs on public.lecteurs;
+create trigger trg_capacite_lecteurs
+  before insert or update of archived on public.lecteurs
+  for each row execute function public.verifier_capacite_lecteurs();
 
 -- 2. Indexes composites pour 200 lecteurs × 52 samedis = 10k+ lignes
 --    Les pages Présences/Cotisations filtrent par date_samedi + lecteur_id

@@ -46,12 +46,15 @@ export default function Evenements() {
 
   const load = useCallback(async () => {
     const [rE, rP] = await Promise.all([
-      supabase.from('evenements').select('*').order('date_evenement', { ascending: false }),
+      supabase
+        .from('evenements')
+        .select('id, nom, date_evenement, lieu, montant_participation, statut, created_at')
+        .order('date_evenement', { ascending: false }),
       // Compteurs calculés en base (200 lecteurs × N événements dépasserait
       // vite la limite de 1 000 lignes de PostgREST).
       supabase.from('v_evenements_avancement').select('id, participants'),
     ]);
-    const list = ((rE.data ?? []) as Evenement[]);
+    const list = (rE.data ?? []) as Evenement[];
     setEvenements(list);
     const counts: Record<string, number> = {};
     ((rP.data ?? []) as { id: string; participants: number }[]).forEach((p) => {

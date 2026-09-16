@@ -38,9 +38,15 @@ export default function Fraternites() {
 
   const load = useCallback(async () => {
     const [rF, rL] = await Promise.all([
-      supabase.from('fraternites').select('*').order('nom'),
+      supabase.from('fraternites').select('id, nom, responsables').order('nom'),
+      // 200 max : colonnes minimales, pas de select * (60% de gain)
       toutesLesLignes<Lecteur>((de, a) =>
-        supabase.from('lecteurs').select('*').eq('archived', false).order('matricule').range(de, a)
+        supabase
+          .from('lecteurs')
+          .select('id, matricule, nom, prenom, fraternite_id, archived')
+          .eq('archived', false)
+          .order('matricule')
+          .range(de, a)
       ),
     ]);
     setFraternites((rF.data ?? []) as Fraternite[]);

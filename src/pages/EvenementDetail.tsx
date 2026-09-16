@@ -97,8 +97,16 @@ export default function EvenementDetail() {
         .from('evenement_participants')
         .select('lecteur_id, lecteurs(id, matricule, nom, prenom, archived, fraternite_id, grade_id)')
         .eq('event_id', id),
-      supabase.from('evenement_paiements').select('*').eq('event_id', id).order('paye_at'),
-      supabase.from('caisse_operations').select('*').eq('event_id', id).order('created_at'),
+      supabase
+        .from('evenement_paiements')
+        .select('id, lecteur_id, montant, paye_at')
+        .eq('event_id', id)
+        .order('paye_at'),
+      supabase
+        .from('caisse_operations')
+        .select('id, type, montant, motif, created_at')
+        .eq('event_id', id)
+        .order('created_at'),
     ]);
     const lecteursFromJoin = (rPartAvecLecteurs.data ?? [])
       .map((r: any) => r.lecteurs)
@@ -211,7 +219,7 @@ export default function EvenementDetail() {
     setBusyInscription(true);
     const { data: l } = await supabase
       .from('lecteurs')
-      .select('*')
+      .select('id, matricule, nom, prenom, archived')
       .eq('matricule', q)
       .maybeSingle();
     if (!l) {

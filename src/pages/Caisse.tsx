@@ -95,7 +95,7 @@ export default function Caisse() {
       supabase.from('v_cotisations_par_annee').select('*').eq('annee', annee).maybeSingle(),
       supabase
         .from('caisse_operations')
-        .select('*')
+        .select('id, type, montant, motif, created_at, recorded_by')
         .is('event_id', null)
         .order('created_at'),
       supabase.from('lecteurs').select('id, matricule'),
@@ -124,12 +124,6 @@ export default function Caisse() {
    * (`caisse_operations` est publiée par la migration 20260915180000.)
    */
   useRealtime('realtime-caisse', ['cotisations', 'caisse_operations'], load);
-
-  const matriculeDe = (lid: string) =>
-    lecteurs.find((l) => l.id === lid)?.matricule ?? '—';
-
-  const auteurName = (uid: string | null) =>
-    profiles.find((p) => p.id === uid)?.full_name ?? '—';
 
   // --------------------------------------------------------------- totaux
   // Solde général : toutes les cotisations jamais encaissées + encaissements

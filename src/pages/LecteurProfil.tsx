@@ -143,26 +143,34 @@ export default function LecteurProfil() {
 
   const load = useCallback(async () => {
     if (!id) return;
-    const [rL, rG, rH, rP, rC, rPart, rA, rProf, rSet] = await Promise.all([
+    // Optimisé 200 : selects minimaux, évite select * sur 52 samedis + évite in() overflow via jointure
+    const [rL, rG, rH, rP, rC, rPartJoin, rA, rProf, rSet] = await Promise.all([
       supabase.from('lecteurs').select('*').eq('id', id).maybeSingle(),
-      supabase.from('grades').select('*').order('id'),
+      supabase.from('grades').select('id, nom').order('id'),
       supabase
         .from('lecteur_grades')
-        .select('*')
+        .select('id, grade_id, changed_at')
         .eq('lecteur_id', id)
         .order('id', { ascending: false }),
       supabase
         .from('presences')
-        .select('*')
+        .select('id, date_samedi, statut')
         .eq('lecteur_id', id)
         .order('date_samedi'),
       supabase
         .from('cotisations')
-        .select('*')
+        .select('id, date_samedi, paye, montant')
         .eq('lecteur_id', id)
         .order('date_samedi'),
-      supabase.from('evenement_participants').select('*').eq('lecteur_id', id),
-      supabase.from('appreciations').select('*').eq('lecteur_id', id),
+      // Jointure directe évite in('id', [N UUIDs]) qui dépasse la limite URL à 200
+      supabase
+        .from('evenement_participants')
+        .select('event_id, evenements(id, nom, date_evenement, lieu, montant_participation, statut)')
+        .eq('lecteur_id', id),
+      supabase
+        .from('appreciations')
+        .select('id, nature, motif, created_by, created_at, deleted')
+        .eq('lecteur_id', id),
       supabase.from('profiles').select('id, full_name'),
       supabase.from('app_settings').select('value').eq('key', 'montant_cotisation').maybeSingle(),
     ]);
@@ -180,11 +188,10 @@ export default function LecteurProfil() {
     setProfiles((rProf.data ?? []) as Profile[]);
     if (rSet.data) setMontantCot(Number(rSet.data.value) || 50);
 
-    const partIds = ((rPart.data ?? []) as { event_id: string }[]).map((p) => p.event_id);
-    if (partIds.length > 0) {
-      const rE = await supabase.from('evenements').select('*').in('id', partIds);
-      setEvenements(((rE.data ?? []) as Evenement[]).sort((a, b) => (a.date_evenement < b.date_evenement ? -1 : 1)));
-    }
+    const evs = (rPartJoin.data ?? [])
+      .map((r: any) => r.evenements)
+      .filter(Boolean) as Evenement[];
+    setEvenements(evs.sort((a, b) => (a.date_evenement < b.date_evenement ? -1 : 1)));
     const rF = await supabase.from('fraternites').select('id, nom').order('nom');
     setFraternites((rF.data ?? []) as { id: string; nom: string }[]);
     setLoading(false);
