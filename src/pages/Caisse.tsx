@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { toutesLesLignes } from '../lib/pagination';
 import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -81,7 +82,7 @@ export default function Caisse() {
     const d1 = dateISO(new Date(annee, mois, 1));
     const d2 = dateISO(new Date(annee, mois + 1, 0));
     const [rCM, rTot, rAn, rO, rL, rP] = await Promise.all([
-      // mois affiché
+      // mois affiché : <1000 lignes (200 lecteurs max × ~4 samedis)
       supabase
         .from('cotisations')
         .select(COLONNES_COT)
@@ -93,12 +94,19 @@ export default function Caisse() {
       // complet des cotisations dans le navigateur (200 lecteurs × 52 samedis).
       supabase.from('v_caisse_totaux').select('*').maybeSingle(),
       supabase.from('v_cotisations_par_annee').select('*').eq('annee', annee).maybeSingle(),
-      supabase
-        .from('caisse_operations')
-        .select('id, type, montant, motif, created_at, recorded_by')
-        .is('event_id', null)
-        .order('created_at'),
-      supabase.from('lecteurs').select('id, matricule'),
+      // 200 lecteurs × 12 mois = potentiel >1000 opérations sur 2 ans → paginé
+      toutesLesLignes<CaisseOperation>((de, a) =>
+        supabase
+          .from('caisse_operations')
+          .select('id, type, montant, motif, created_at, recorded_by')
+          .is('event_id', null)
+          .order('created_at')
+          .range(de, a)
+      ),
+      // 200 lecteurs max : colonnes minimales, paginé pour éviter troncature PostgREST
+      toutesLesLignes<Lecteur>((de, a) =>
+        supabase.from('lecteurs').select('id, matricule').order('matricule').range(de, a)
+      ),
       supabase.from('profiles').select('id, full_name'),
     ]);
     setCotsMois((rCM.data ?? []) as Cotisation[]);
