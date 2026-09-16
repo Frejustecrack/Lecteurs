@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { toutesLesLignes } from '../lib/pagination';
 import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import { fmtDateHeure } from '../lib/dates';
@@ -80,7 +81,9 @@ export default function Lecteurs() {
 
   const load = useCallback(async () => {
     const [rL, rF, rG] = await Promise.all([
-      supabase.from('lecteurs').select('*').order('matricule'),
+      toutesLesLignes<Lecteur>((de, a) =>
+        supabase.from('lecteurs').select('*').order('matricule').range(de, a)
+      ),
       supabase.from('fraternites').select('*').order('nom'),
       supabase.from('grades').select('*').order('id'),
     ]);

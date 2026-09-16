@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { toutesLesLignes } from '../lib/pagination';
 import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import { traduireErreur } from '../lib/errors';
@@ -38,7 +39,9 @@ export default function Fraternites() {
   const load = useCallback(async () => {
     const [rF, rL] = await Promise.all([
       supabase.from('fraternites').select('*').order('nom'),
-      supabase.from('lecteurs').select('*').eq('archived', false),
+      toutesLesLignes<Lecteur>((de, a) =>
+        supabase.from('lecteurs').select('*').eq('archived', false).order('matricule').range(de, a)
+      ),
     ]);
     setFraternites((rF.data ?? []) as Fraternite[]);
     setLecteurs((rL.data ?? []) as Lecteur[]);

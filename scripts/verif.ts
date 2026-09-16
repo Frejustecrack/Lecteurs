@@ -8,6 +8,7 @@
  * toute régression dans src/lib/* fasse échouer la vérification.
  */
 import {
+  aujourdhuiBenin,
   dateISO,
   dernierSamedi,
   estGelee,
@@ -35,6 +36,7 @@ import {
 } from '../src/lib/recap.ts';
 import type { Lecteur } from '../src/lib/types.ts';
 import { creerPlanificateur } from '../src/lib/planificateur.ts';
+import { toutesLesLignes } from '../src/lib/pagination.ts';
 
 let reussites = 0;
 const echecs: string[] = [];
@@ -377,6 +379,58 @@ eq('samedi unique : 2 absences effectives (Paul absent + Jean non pointé)', app
 const recapVide = calculerRecaps(lect, pres, []);
 eq('période vide : taux 0', recapVide[0].taux, 0);
 eq('période vide : aucun assidu', appliquerFiltreRecap(recapVide, 'parfaits').length, 0);
+
+// ============================================================================
+console.log('\n── Fuseau : « aujourd\'hui » est la date au Bénin (Africa/Lagos) ────');
+// ============================================================================
+// Samedi 12/09/2026 à 23 h 30 au Bénin = 22 h 30 UTC. Un navigateur réglé sur
+// Los Angeles (UTC-7) afficherait encore le samedi 15 h 30 : même résultat
+// attendu, car on ne dépend pas du fuseau du navigateur.
+{
+  const instant = new Date('2026-09-12T22:30:00Z'); // samedi 23:30 Bénin
+  eq('12/09 23:30 Bénin → aujourd\'hui = 12/09', dateISO(aujourdhuiBenin(instant)), '2026-09-12');
+  eq('12/09 23:30 Bénin → dernier samedi = 12/09 (encore ouvert)', dateISO(dernierSamedi(instant)), '2026-09-12');
+  const minuit = new Date('2026-09-12T23:00:00Z'); // dimanche 00:00 Bénin
+  eq('dimanche 00:00 Bénin → aujourd\'hui = 13/09', dateISO(aujourdhuiBenin(minuit)), '2026-09-13');
+  eq('dimanche 00:00 Bénin → dernier samedi = 12/09 (gelé à partir de là)', dateISO(dernierSamedi(minuit)), '2026-09-12');
+  const vendrediTard = new Date('2026-09-18T23:30:00Z'); // samedi 00:30 Bénin
+  eq('samedi 00:30 Bénin (vendredi 23:30 UTC) → dernier samedi = 19/09', dateISO(dernierSamedi(vendrediTard)), '2026-09-19');
+  const mercredi = new Date('2026-09-16T10:00:00Z');
+  eq('mercredi 16/09 → dernier samedi = 12/09', dateISO(dernierSamedi(mercredi)), '2026-09-12');
+}
+
+// ============================================================================
+console.log('\n── Pagination : PostgREST tronque à 1 000 lignes ────────────────────');
+// ============================================================================
+{
+  // Source de 2 350 lignes servie par pages de 1 000 (comme PostgREST).
+  const source = Array.from({ length: 2350 }, (_, i) => ({ id: i + 1 }));
+  const appels: [number, number][] = [];
+  const r = await toutesLesLignes<{ id: number }>(async (de, a) => {
+    appels.push([de, a]);
+    return { data: source.slice(de, a + 1), error: null };
+  });
+  eq('2 350 lignes récupérées intégralement', r.data.length, 2350);
+  eq('3 appels (1000 + 1000 + 350)', appels.length, 3);
+  eq('dernière ligne = 2350', r.data.at(-1)?.id, 2350);
+  eq('pas d\'erreur', r.error, null);
+
+  // Exactement 1 000 lignes : un appel supplémentaire vide confirme la fin.
+  const mille = Array.from({ length: 1000 }, (_, i) => ({ id: i }));
+  const r2 = await toutesLesLignes<{ id: number }>(async (de, a) => ({ data: mille.slice(de, a + 1), error: null }));
+  eq('exactement 1 000 lignes : toutes récupérées', r2.data.length, 1000);
+
+  // Erreur à la 2ᵉ page : remontée, avec ce qui a été lu.
+  const r3 = await toutesLesLignes<{ id: number }>(async (de) =>
+    de === 0 ? { data: source.slice(0, 1000), error: null } : { data: null, error: { message: 'réseau' } }
+  );
+  eq('erreur en cours de route remontée', r3.error?.message, 'réseau');
+  eq('les lignes déjà lues sont conservées', r3.data.length, 1000);
+
+  // Source vide.
+  const r4 = await toutesLesLignes<{ id: number }>(async () => ({ data: [], error: null }));
+  eq('source vide → 0 ligne', r4.data.length, 0);
+}
 
 // ============================================================================
 console.log('\n── Temps réel : regroupement et non-superposition des rechargements ──');

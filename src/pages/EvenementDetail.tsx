@@ -236,7 +236,6 @@ export default function EvenementDetail() {
     const { error } = await supabase.from('evenement_participants').insert({
       event_id: e!.id,
       lecteur_id: (l as Lecteur).id,
-      registered_by: profile?.id ?? null,
     });
     setBusyInscription(false);
     if (error) toast(traduireErreur(error, 'inscrire ce lecteur à l\'événement'), 'err');
@@ -290,7 +289,6 @@ export default function EvenementDetail() {
       event_id: e!.id,
       lecteur_id: trancheOuverte,
       montant,
-      recorded_by: profile?.id ?? null,
     });
     setBusyTranche(false);
     if (error) toast(traduireErreur(error, 'enregistrer cette tranche de paiement'), 'err');
@@ -380,7 +378,6 @@ export default function EvenementDetail() {
       type: opForm.type,
       montant,
       motif: opForm.motif.trim(),
-      recorded_by: profile?.id ?? null,
     });
     setBusyOp(false);
     if (error) toast(traduireErreur(error, 'enregistrer cette opération de caisse'), 'err');

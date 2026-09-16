@@ -203,7 +203,6 @@ export default function Caisse() {
       type: opForm.type,
       montant,
       motif: opForm.motif.trim(),
-      recorded_by: profile?.id ?? null,
     });
     setBusyOp(false);
     if (error) {

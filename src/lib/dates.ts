@@ -1,5 +1,24 @@
-// Utilitaires de dates — le calcul se fait dans le fuseau de l'utilisateur
-// (l'app est utilisée au Bénin, Africa/Lagos).
+// Utilitaires de dates.
+//
+// RÈGLE : « aujourd'hui » est TOUJOURS la date au Bénin (Africa/Lagos, UTC+1,
+// sans heure d'été), quel que soit le fuseau du téléphone ou de l'ordinateur.
+// La base fait de même (fonction SQL `aujourdhui_benin()`), sinon un samedi
+// entre 23 h et minuit l'interface dirait « ouvert » quand la base dit « gelé ».
+export const FUSEAU_CDLJ = 'Africa/Lagos';
+
+const fmtBenin = new Intl.DateTimeFormat('en-CA', {
+  timeZone: FUSEAU_CDLJ,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+/** Date du jour au Bénin, à minuit (heure locale du navigateur, sans décalage). */
+export function aujourdhuiBenin(maintenant: Date = new Date()): Date {
+  // en-CA donne « AAAA-MM-JJ ».
+  const [y, m, j] = fmtBenin.format(maintenant).split('-').map(Number);
+  return new Date(y, m - 1, j);
+}
 
 export function dateISO(d: Date): string {
   const y = d.getFullYear();
@@ -20,9 +39,8 @@ export function samedisDuMois(annee: number, mois: number): Date[] {
 }
 
 /** Dernier samedi (aujourd'hui si nous sommes samedi). */
-export function dernierSamedi(): Date {
-  const t = new Date();
-  t.setHours(0, 0, 0, 0);
+export function dernierSamedi(maintenant: Date = new Date()): Date {
+  const t = aujourdhuiBenin(maintenant);
   const dow = t.getDay(); // 0 = dimanche … 6 = samedi
   const offset = dow === 6 ? 0 : dow === 0 ? 1 : dow + 1;
   t.setDate(t.getDate() - offset);
@@ -144,7 +162,7 @@ export function semaineLabel(d: Date): string {
 
 /** Vrai si la semaine contient aujourd'hui. */
 export function estSemaineCourante(d: Date): boolean {
-  return dateISO(lundiDeSemaine(d)) === dateISO(lundiDeSemaine(new Date()));
+  return dateISO(lundiDeSemaine(d)) === dateISO(lundiDeSemaine(aujourdhuiBenin()));
 }
 
 // ---------------------------------------------------------------------------
@@ -161,9 +179,7 @@ export function samediEstArrive(dateSamedi: string | Date): boolean {
       : new Date(dateSamedi);
   if (isNaN(d.getTime())) return false;
   d.setHours(0, 0, 0, 0);
-  const auj = new Date();
-  auj.setHours(0, 0, 0, 0);
-  return d.getTime() <= auj.getTime();
+  return d.getTime() <= aujourdhuiBenin().getTime();
 }
 
 /** Ne conserve que les samedis déjà arrivés (passés ou en cours). */

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { toutesLesLignes } from '../lib/pagination';
 import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -87,13 +88,20 @@ export default function Presences() {
       return;
     }
     const [rL, rF, rP] = await Promise.all([
-      supabase.from('lecteurs').select('*').eq('archived', false).order('matricule'),
+      toutesLesLignes<Lecteur>((de, a) =>
+        supabase.from('lecteurs').select('*').eq('archived', false).order('matricule').range(de, a)
+      ),
       supabase.from('fraternites').select('*').order('nom'),
-      supabase
-        .from('presences')
-        .select('*')
-        .gte('date_samedi', samedis[0])
-        .lte('date_samedi', samedis[samedis.length - 1]),
+      // 200 lecteurs × 5 samedis = 1 000 lignes : la limite PostgREST. Paginé.
+      toutesLesLignes<Presence>((de, a) =>
+        supabase
+          .from('presences')
+          .select('*')
+          .gte('date_samedi', samedis[0])
+          .lte('date_samedi', samedis[samedis.length - 1])
+          .order('id')
+          .range(de, a)
+      ),
     ]);
     setLecteurs((rL.data ?? []) as Lecteur[]);
     setFraternites((rF.data ?? []) as Fraternite[]);
@@ -153,7 +161,6 @@ export default function Presences() {
           lecteur_id: l.id,
           date_samedi: sam,
           statut: next,
-          recorded_by: profile?.id ?? null,
         },
         { onConflict: 'lecteur_id,date_samedi' }
       );

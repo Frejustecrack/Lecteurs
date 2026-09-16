@@ -47,13 +47,15 @@ export default function Evenements() {
   const load = useCallback(async () => {
     const [rE, rP] = await Promise.all([
       supabase.from('evenements').select('*').order('date_evenement', { ascending: false }),
-      supabase.from('evenement_participants').select('event_id'),
+      // Compteurs calculés en base (200 lecteurs × N événements dépasserait
+      // vite la limite de 1 000 lignes de PostgREST).
+      supabase.from('v_evenements_avancement').select('id, participants'),
     ]);
     const list = ((rE.data ?? []) as Evenement[]);
     setEvenements(list);
     const counts: Record<string, number> = {};
-    ((rP.data ?? []) as { event_id: string }[]).forEach((p) => {
-      counts[p.event_id] = (counts[p.event_id] ?? 0) + 1;
+    ((rP.data ?? []) as { id: string; participants: number }[]).forEach((p) => {
+      counts[p.id] = Number(p.participants);
     });
     setNbParticipants(counts);
     setLoading(false);
@@ -96,9 +98,7 @@ export default function Evenements() {
       date_evenement: form.date_evenement,
       lieu: form.lieu.trim() || null,
       montant_participation: Number(form.montant_participation) || 0,
-      // Créateur de l'événement (cahier des charges §18 : actions tracées
-      // avec leur auteur).
-      ...(editId ? {} : { created_by: profile?.id ?? null }),
+      // created_by est posé par la base (trigger forcer_auteur = auth.uid()).
     };
     try {
       if (editId) {

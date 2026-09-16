@@ -395,8 +395,7 @@ export default function LecteurProfil() {
       lecteur_id: l.id,
       nature: appriseForm.nature,
       motif: appriseForm.motif.trim(),
-      // Auteur de l'appréciation : exigé par le cahier des charges §15.
-      created_by: profile?.id ?? null,
+      // created_by est posé par la base (trigger forcer_auteur = auth.uid()).
     });
     setBusyAppreciation(false);
     if (error) toast(traduireErreur(error, 'enregistrer cette appréciation'), 'err');

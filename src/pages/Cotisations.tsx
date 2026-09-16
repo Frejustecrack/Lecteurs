@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { toutesLesLignes } from '../lib/pagination';
 import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -87,7 +88,9 @@ export default function Cotisations() {
 
   const load = useCallback(async () => {
     const [rL, rF, rSet] = await Promise.all([
-      supabase.from('lecteurs').select('*').eq('archived', false).order('matricule'),
+      toutesLesLignes<Lecteur>((de, a) =>
+        supabase.from('lecteurs').select('*').eq('archived', false).order('matricule').range(de, a)
+      ),
       supabase.from('fraternites').select('*').order('nom'),
       supabase
         .from('app_settings')
@@ -100,11 +103,16 @@ export default function Cotisations() {
     if (rSet.data) setMontantCot(Number(rSet.data.value) || 50);
 
     if (samedis.length > 0) {
-      const rC = await supabase
-        .from('cotisations')
-        .select('*')
-        .gte('date_samedi', samedis[0])
-        .lte('date_samedi', samedis[samedis.length - 1]);
+      // 200 lecteurs × 5 samedis = 1 000 lignes : la limite PostgREST. Paginé.
+      const rC = await toutesLesLignes<Cotisation>((de, a) =>
+        supabase
+          .from('cotisations')
+          .select('*')
+          .gte('date_samedi', samedis[0])
+          .lte('date_samedi', samedis[samedis.length - 1])
+          .order('id')
+          .range(de, a)
+      );
       setCotisations((rC.data ?? []) as Cotisation[]);
     } else {
       setCotisations([]);
@@ -153,20 +161,15 @@ export default function Cotisations() {
     if (current?.paye) {
       ({ error } = await supabase
         .from('cotisations')
-        .update({ paye: false, paid_at: null, recorded_by: profile?.id ?? null })
+        .update({ paye: false })
         .eq('id', current.id));
     } else {
       ({ error } = await supabase
         .from('cotisations')
         .upsert(
-          {
-            lecteur_id: l.id,
-            date_samedi: sam,
-            paye: true,
-            montant: montantCot,
-            paid_at: new Date().toISOString(),
-            recorded_by: profile?.id ?? null,
-          },
+          // montant, paid_at et recorded_by sont posés par la base
+          // (triggers fixer_montant_cotisation / forcer_auteur).
+          { lecteur_id: l.id, date_samedi: sam, paye: true },
           { onConflict: 'lecteur_id,date_samedi' }
         ));
     }

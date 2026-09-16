@@ -270,6 +270,44 @@ await attendRefus('responsable ne modifie pas le montant de cotisation (app_sett
 await attendLignes('admin modifie le montant de cotisation', 'admin',
   `update public.app_settings set value = '100' where key = 'montant_cotisation' returning key`);
 
+section('5b. Auteur et montant forcés par la base');
+const l3 = (await enAdminSql(`insert into public.lecteurs (nom, prenom, matricule) values ('KPOSSOU', 'Ida', '') returning id`))[0];
+{
+  // Le client envoie montant = 1 et recorded_by = admin : la base impose 100 et le caissier.
+  const r = await attendOk('caissier envoie montant=1, recorded_by=admin', 'caissier',
+    `insert into public.cotisations (lecteur_id, date_samedi, paye, montant, recorded_by) values ($1, $2, true, 1, $3) returning montant, recorded_by, paid_at`, [l3.id, dernier, U.admin]);
+  const x = r.rows?.[0];
+  if (x && x.montant === 100) ok('montant forcé au tarif courant (100)'); else ko('montant forcé', JSON.stringify(x));
+  if (x && x.recorded_by === U.caissier) ok('recorded_by forcé à auth.uid() (caissier)'); else ko('recorded_by forcé', JSON.stringify(x));
+  if (x && x.paid_at) ok('paid_at posé par la base'); else ko('paid_at', JSON.stringify(x));
+  // Passage à non payé : paid_at effacé ; repassage à payé : montant recalculé.
+  await attendLignes('caissier annule le paiement', 'caissier', `update public.cotisations set paye = false where lecteur_id = $1 and date_samedi = $2 returning id`, [l3.id, dernier]);
+  const r2 = await enAdminSql(`select paid_at, montant from public.cotisations where lecteur_id = $1 and date_samedi = $2`, [l3.id, dernier]);
+  if (r2[0].paid_at === null) ok('paid_at effacé à l\'annulation'); else ko('paid_at effacé', JSON.stringify(r2[0]));
+  await enAdminSql(`update public.app_settings set value = '75' where key = 'montant_cotisation'`);
+  await attendLignes('caissier ré-encaisse après changement de tarif (75)', 'caissier', `update public.cotisations set paye = true where lecteur_id = $1 and date_samedi = $2 returning id`, [l3.id, dernier]);
+  const r3 = await enAdminSql(`select montant, recorded_by from public.cotisations where lecteur_id = $1 and date_samedi = $2`, [l3.id, dernier]);
+  if (r3[0].montant === 75) ok('montant recalculé au nouveau tarif (75)'); else ko('montant recalculé', JSON.stringify(r3[0]));
+  await enAdminSql(`update public.app_settings set value = '50' where key = 'montant_cotisation'`);
+
+  // Présence : recorded_by forcé.
+  const rp = await attendOk('responsable envoie recorded_by=admin sur une présence', 'responsable',
+    `insert into public.presences (lecteur_id, date_samedi, statut, recorded_by) values ($1, $2, 'present', $3) on conflict (lecteur_id, date_samedi) do update set statut = 'present' returning recorded_by`, [l3.id, dernier, U.admin]);
+  if (rp.rows?.[0]?.recorded_by === U.responsable) ok('presences.recorded_by forcé au responsable'); else ko('presences.recorded_by', JSON.stringify(rp.rows?.[0]));
+}
+
+section('5c. Contraintes métier');
+{
+  const mardi = (await enAdminSql(`select (public.dernier_samedi() + 3)::text d`))[0].d;
+  await attendRefus('présence un mardi refusée', 'admin', `insert into public.presences (lecteur_id, date_samedi, statut) values ($1, $2, 'present') returning id`, [l1.id, mardi]);
+  await attendRefus('cotisation un mardi refusée', 'caissier', `insert into public.cotisations (lecteur_id, date_samedi, paye) values ($1, $2, true) returning id`, [l1.id, mardi]);
+  // l2 est archivé (§3) : aucune saisie possible. On le vérifie sur un samedi futur (pas de conflit).
+  await attendRefus('présence sur lecteur archivé refusée', 'admin', `insert into public.presences (lecteur_id, date_samedi, statut) values ($1, $2, 'present') returning id`, [l2.id, futur]);
+  await attendRefus('cotisation sur lecteur archivé refusée', 'caissier', `insert into public.cotisations (lecteur_id, date_samedi, paye) values ($1, $2, true) returning id`, [l2.id, futur]);
+  const auj = (await enAdminSql(`select public.aujourdhui_benin()::text a, (now() at time zone 'Africa/Lagos')::date::text b`))[0];
+  if (auj.a === auj.b) ok(`aujourdhui_benin() = ${auj.a} (Africa/Lagos)`); else ko('aujourdhui_benin', JSON.stringify(auj));
+}
+
 // ---------------------------------------------------------------------------
 // 6. Événements — cycle de vie, tranches, caisse
 // ---------------------------------------------------------------------------
@@ -278,8 +316,15 @@ await attendRefus('responsable ne crée pas d\'événement', 'responsable',
   `insert into public.evenements (nom, date_evenement, montant_participation) values ('Pèlerinage', current_date, 1000) returning id`);
 const ev = (await attendOk('CO crée un événement', 'co',
   `insert into public.evenements (nom, date_evenement, montant_participation, created_by) values ('Pèlerinage', current_date, 1000, $1) returning id`, [U.co])).rows[0].id;
-await attendOk('responsable inscrit un participant', 'responsable',
-  `insert into public.evenement_participants (event_id, lecteur_id) values ($1, $2) returning id`, [ev, l1.id]);
+{
+  const c = await enAdminSql(`select created_by from public.evenements where id = $1`, [ev]);
+  if (c[0].created_by === U.co) ok('evenements.created_by forcé au CO'); else ko('created_by', JSON.stringify(c[0]));
+}
+const rIns = await attendOk('responsable inscrit un participant (registered_by=admin envoyé)', 'responsable',
+  `insert into public.evenement_participants (event_id, lecteur_id, registered_by) values ($1, $2, $3) returning registered_by`, [ev, l1.id, U.admin]);
+if (rIns.rows?.[0]?.registered_by === U.responsable) ok('registered_by forcé au responsable'); else ko('registered_by', JSON.stringify(rIns.rows?.[0]));
+await attendRefus('inscription d\'un lecteur archivé refusée', 'responsable',
+  `insert into public.evenement_participants (event_id, lecteur_id) values ($1, $2) returning id`, [ev, l2.id]);
 await attendRefus('inscription en double refusée', 'responsable',
   `insert into public.evenement_participants (event_id, lecteur_id) values ($1, $2) returning id`, [ev, l1.id]);
 await attendRefus('responsable n\'encaisse pas de tranche', 'responsable',
@@ -368,7 +413,7 @@ section('8. Agrégats & volumétrie (200 lecteurs × 52 samedis)');
     select 'NOM' || g, 'Prenom' || g, '' from generate_series(1, 200) g;
   `);
   const n = (await enAdminSql(`select count(*)::int n, max(matricule) m from public.lecteurs`))[0];
-  if (n.n === 202 && n.m === 'LEC301') ok(`202 lecteurs, dernier matricule ${n.m}`);
+  if (n.n === 203 && n.m === 'LEC302') ok(`203 lecteurs, dernier matricule ${n.m}`);
   else ko('volumétrie lecteurs', JSON.stringify(n));
 
   const t0 = Date.now();
@@ -377,23 +422,49 @@ section('8. Agrégats & volumétrie (200 lecteurs × 52 samedis)');
     select l.id, d::date, true, 50, d
       from public.lecteurs l,
            generate_series(public.dernier_samedi() - 7 * 51, public.dernier_samedi(), interval '7 days') d
-     where l.matricule > 'LEC101'
+     where l.matricule > 'LEC102'
     on conflict do nothing;
     insert into public.presences (lecteur_id, date_samedi, statut)
     select l.id, d::date, case when random() < 0.8 then 'present' else 'absent' end
       from public.lecteurs l,
            generate_series(public.dernier_samedi() - 7 * 51, public.dernier_samedi(), interval '7 days') d
-     where l.matricule > 'LEC101'
+     where l.matricule > 'LEC102'
     on conflict do nothing;
   `);
   const c = (await enAdminSql(`select (select count(*)::int from public.cotisations) c, (select count(*)::int from public.presences) p, (select count(*)::int from public.logs) l`))[0];
   ok(`${c.c} cotisations, ${c.p} présences, ${c.l} lignes de journal insérées en ${Date.now() - t0} ms (triggers d'audit inclus)`);
 
   const v = await en('responsable', `select * from public.v_caisse_totaux`);
-  const attendu = 200 * 52 * 50 + 50 + 50;
+  // Référence calculée en SQL propriétaire (hors RLS) : la vue doit dire pareil.
+  const attendu = Number((await enAdminSql(`select coalesce(sum(montant),0)::bigint t from public.cotisations where paye`))[0].t);
+  if (attendu === 200 * 52 * 50 + 50 + 50 + 75) ok(`référence : 200 × 52 × 50 + 3 cotisations de test = ${attendu} F`); else ko('référence cotisations', String(attendu));
   if (v.rows && Number(v.rows[0].total_cotisations) === attendu && Number(v.rows[0].total_encaissements) === 100)
     ok(`v_caisse_totaux : ${v.rows[0].total_cotisations} F de cotisations, ${v.rows[0].total_encaissements} F d'encaissements`);
   else ko('v_caisse_totaux', JSON.stringify(v.rows?.[0] ?? v.error?.message));
+
+  // Vues mensuelles : cohérentes avec les lignes brutes (que le navigateur ne charge plus).
+  const brut = (await enAdminSql(`
+    select to_char(date_samedi,'YYYY-MM') mois, count(*) filter (where statut='present')::int presents, count(*) filter (where statut='absent')::int absents
+      from public.presences p join public.lecteurs l on l.id = p.lecteur_id and not l.archived
+     where date_samedi <= public.aujourdhui_benin() group by 1 order by 1`));
+  const vue = (await en('responsable', `select * from public.v_presences_par_mois order by mois`)).rows ?? [];
+  const identique = brut.length === vue.length && brut.every((b, i) => b.mois === vue[i].mois && b.presents === vue[i].presents && b.absents === vue[i].absents);
+  if (identique && vue.length >= 12) ok(`v_presences_par_mois : ${vue.length} mois, identiques au calcul brut (${brut.reduce((s, b) => s + b.presents + b.absents, 0)} présences agrégées)`);
+  else ko('v_presences_par_mois', JSON.stringify({ brut: brut.slice(0, 2), vue: vue.slice(0, 2) }));
+  const cm = (await en('caissier', `select * from public.v_cotisations_par_mois order by mois`)).rows ?? [];
+  const sommeCm = cm.reduce((s, r) => s + Number(r.total), 0);
+  if (sommeCm === attendu) ok(`v_cotisations_par_mois : ${cm.length} mois, total ${sommeCm} F`); else ko('v_cotisations_par_mois', `${sommeCm} ≠ ${attendu}`);
+  const eff = (await en('responsable', `select * from public.v_effectif_par_mois order by mois`)).rows ?? [];
+  if (eff.length === 12 && Number(eff.at(-1).effectif) === 202) ok(`v_effectif_par_mois : 12 mois, effectif courant ${eff.at(-1).effectif}`); else ko('v_effectif_par_mois', JSON.stringify(eff.slice(-1)));
+  const cpt = (await en('responsable', `select * from public.v_lecteurs_compteurs`)).rows?.[0];
+  if (cpt && Number(cpt.actifs) === 202 && Number(cpt.archives) === 1) ok(`v_lecteurs_compteurs : ${cpt.actifs} actifs, ${cpt.archives} archivé`); else ko('v_lecteurs_compteurs', JSON.stringify(cpt));
+
+  // Preuve du problème « 1 000 lignes » : un mois à 5 samedis pour 200 lecteurs.
+  const nbMois5 = (await enAdminSql(`
+    select count(*)::int n from public.presences p
+     where to_char(date_samedi,'YYYY-MM') = (select to_char(date_samedi,'YYYY-MM') from public.presences group by 1 having count(distinct date_samedi) = 5 order by 1 desc limit 1)`))[0].n;
+  if (nbMois5 >= 1000) ok(`un mois à 5 samedis = ${nbMois5} présences (≥ 1 000 : la page Présences DOIT paginer — cf. verif.ts « Pagination »)`);
+  else ok(`(aucun mois à 5 samedis complet dans la fenêtre : ${nbMois5} lignes)`);
 
   const a = await en('caissier', `select * from public.v_cotisations_par_annee order by annee`);
   const somme = a.rows?.reduce((s, r) => s + Number(r.total), 0);

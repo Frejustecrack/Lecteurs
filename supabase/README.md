@@ -15,7 +15,8 @@ supabase/
 │   ├── 20260914150700_fix_audit_trigger.sql
 │   ├── 20260915120000_rename_grades_animation.sql
 │   └── 20260915180000_realtime_caisse_evenements.sql
-│   └── 20260916120000_securite_journal_rls.sql
+│   ├── 20260916120000_securite_journal_rls.sql
+│   └── 20260916150000_integrite_auteur_montant_agregats.sql
 └── scripts/
     ├── seed-comptes.sql       ← attribution des rôles — à exécuter UNE fois (SQL Editor)
     └── clean_test_data.sql    ← remise à zéro — UNE fois, jamais en migration
@@ -50,6 +51,7 @@ Une migration **déjà appliquée ne se modifie jamais**. On ajoute un nouveau f
 | `20260915180000_realtime_caisse_evenements.sql` | Ajoute `caisse_operations`, `evenements`, `evenement_participants` et `evenement_paiements` à `supabase_realtime`. Le Dashboard écoutait déjà `caisse_operations`, qui n'était pas publiée : cet abonnement ne pouvait pas se déclencher. Aucune RLS modifiée — la diffusion reste filtrée par les policies de lecture existantes. |
 
 | `20260916120000_securite_journal_rls.sql` | **Journal infalsifiable** : `log_action` révoquée aux comptes applicatifs ; `journal_client()` (liste blanche : connexion, déconnexion, export PDF ; auteur forcé à `auth.uid()`) ; le trigger d'audit qualifie lui-même `evenement.cloture` / `evenement.reouverture` / `evenement.suppression` / `presence.correction_gelee`. **`WITH CHECK`** sur `presences_update`, `caisse_update`, `epaiements_update` ; `caisse_delete` fermé au CO sur événement clôturé. `lecteurs_update_fraternite` supprimée (le RPC est la seule voie). `a_un_role()` : un compte sans rôle ne peut plus rien écrire. `set_role` accepte `co_paroissial`. Vues `v_caisse_totaux`, `v_cotisations_par_annee` (security invoker) + 6 index. Idempotente, vérifiée par `npm run verif:db`. |
+| `20260916150000_integrite_auteur_montant_agregats.sql` | **Intégrité côté base** : triggers `forcer_auteur()` / `forcer_recorded_by_update()` (auteur = `auth.uid()`), `fixer_montant_cotisation()` (montant depuis `app_settings`, `paid_at` géré par la base), CHECK `isodow = 6` sur `presences` et `cotisations` (validée après contrôle, avertissement si violation historique), `refuser_lecteur_archive()`, `aujourdhui_benin()` / `dernier_samedi()` en `Africa/Lagos`, `handle_new_user` ne lit plus `raw_user_meta_data`. Vues `security_invoker` : `v_presences_par_mois`, `v_cotisations_par_mois`, `v_encaissements_par_mois`, `v_effectif_par_mois`, `v_evenements_avancement`, `v_lecteurs_compteurs`. Idempotente, vérifiée par `npm run verif:db` (203 lecteurs, > 10 000 lignes). |
 
 ### Scripts manuels (`scripts/`)
 
