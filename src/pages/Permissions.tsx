@@ -267,7 +267,7 @@ export default function Permissions() {
                     </span>{' '}
                     {p.samedis.map((s) => fmtDate(s)).join(', ')}
                   </div>
-                  <p className="mt-1.5 text-xs italic text-slate-500">
+                  <p className="mt-1.5 text-xs italic text-slate-500 break-words">
                     « {p.motif} »
                   </p>
                 </li>
@@ -277,7 +277,7 @@ export default function Permissions() {
 
           {/* Desktop : tableau */}
           <div className="hidden overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm sm:block">
-            <table className="w-full min-w-[760px] text-left text-sm">
+            <table className="w-full min-w-[640px] text-left text-sm">
               <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="px-3 py-3">Matricule</th>
@@ -632,7 +632,7 @@ function FormulairePermission({
               >
                 ←
               </button>
-              <span className="min-w-[140px] px-1 text-center text-sm font-bold text-slate-700">
+              <span className="min-w-[120px] px-1 text-center text-xs sm:text-sm font-bold text-slate-700">
                 {moisLabel(annee, mois)}
               </span>
               <button
@@ -684,7 +684,7 @@ function FormulairePermission({
                       className="h-4 w-4 rounded border-slate-300 text-cdlj focus:ring-cdlj/30"
                     />
                     <span
-                      className={`text-sm font-medium ${checked ? 'text-cdlj font-semibold' : 'text-slate-700'}`}
+                      className={`min-w-0 text-sm font-medium break-words ${checked ? 'text-cdlj font-semibold' : 'text-slate-700'}`}
                     >
                       Samedi {fmtDate(s)}
                     </span>

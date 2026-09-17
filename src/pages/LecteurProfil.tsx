@@ -692,7 +692,7 @@ export default function LecteurProfil() {
                         </span>{' '}
                         {perm.samedis.map((s) => fmtDate(s)).join(', ')}
                       </div>
-                      <p className="mt-1 text-xs italic text-slate-500">
+                      <p className="mt-1 text-xs italic text-slate-500 break-words">
                         « {perm.motif} »
                       </p>
                     </li>
