@@ -36,7 +36,7 @@ function Logo() {
       </div>
       <div className="leading-tight">
         <div className="text-base font-extrabold tracking-tight text-cdlj">
-          Lecteurs Juniors <span className="font-semibold text-slate-700">à Kobato</span>
+          Lecteurs Juniors <span className="font-semibold text-slate-700">à Akogbato</span>
         </div>
         <div className="max-w-[220px] text-[11px] font-medium italic text-slate-500">
           « Lecteurs, sel et lumière nous sommes »
@@ -181,7 +181,8 @@ export default function Layout() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <div className="text-sm font-extrabold text-cdlj">Lecteurs Juniors à Kobato</div>
+          <div className="text-sm font-extrabold text-cdlj">Lecteurs Juniors à Akogbato</div>
+          <div className="text-sm font-extrabold text-cdlj">Lecteurs Juniors à Akogbato</div>
           <button
             onClick={logout}
             className={`rounded-lg p-2 text-slate-400 hover:bg-slate-100 ${pressCls}`}
