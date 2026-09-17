@@ -165,34 +165,22 @@ export default function Dashboard() {
 
   if (loading) return <Spinner label="Chargement du tableau de bord…" />;
 
-  const capaciteMax = 200;
-  const plein = kpi.actifs >= capaciteMax;
-
   return (
     <div>
       <PageHeader
         title="Tableau de bord"
-        sub={`${moisLabel(new Date().getFullYear(), new Date().getMonth())} — ${kpi.actifs}/${capaciteMax} lecteurs actifs${plein ? ' — capacité atteinte' : ''}`}
+        sub={`${moisLabel(new Date().getFullYear(), new Date().getMonth())} — ${kpi.actifs} lecteur(s) actif(s)`}
         actions={
-          profile && !plein ? (
+          profile ? (
             <Link
               to="/lecteurs"
               className="rounded-lg bg-cdlj px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-cdlj-dark"
             >
               + Nouveau lecteur
             </Link>
-          ) : plein ? (
-            <span className="rounded-lg bg-amber-100 px-3 py-2 text-xs font-semibold text-amber-800">
-              Capacité {capaciteMax} atteinte
-            </span>
           ) : null
         }
       />
-      {plein && (
-        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          Capacité maximale de {capaciteMax} lecteurs actifs atteinte. Archivez un lecteur avant d'en créer un nouveau.
-        </div>
-      )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <StatCard label="Lecteurs actifs" value={kpi.actifs} />
