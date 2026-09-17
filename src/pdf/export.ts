@@ -155,7 +155,7 @@ function piedPage(doc: jsPDF) {
     doc.setFontSize(7.5);
     doc.setTextColor(148, 163, 184); // slate-400
     doc.text(
-      `CDLJ Akogbato — Paroisse Sainte Famille — Document officiel — Page ${i}/${n}`,
+      `Lecteurs Juniors à Akogbato — Paroisse Sainte Famille — Document officiel — Page ${i}/${n}`,
       pageWidth / 2,
       pageHeight - 6,
       { align: 'center' }

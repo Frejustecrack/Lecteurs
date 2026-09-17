@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { toutesLesLignes } from '../lib/pagination';
 import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
+import { useDebounce } from '../lib/useDebounce';
 import { fmtDateHeure } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
 import { journaliserExport } from '../lib/journal';
@@ -69,6 +70,7 @@ export default function Lecteurs() {
   const [grades, setGrades] = useState<Grade[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 300);
   const [fId, setFId] = useState('');
   const [gradeId, setGradeId] = useState('');
   const [tab, setTab] = useState<'actifs' | 'archives'>('actifs');
@@ -109,7 +111,7 @@ export default function Lecteurs() {
   useRealtime('realtime-lecteurs', ['lecteurs', 'fraternites'], load);
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = debouncedSearch.trim().toLowerCase();
     return lecteurs.filter((l) => {
       if (tab === 'actifs' ? l.archived : !l.archived) return false;
       if (fId && l.fraternite_id !== fId) return false;
@@ -262,14 +264,12 @@ export default function Lecteurs() {
   if (loading) return <Spinner label="Chargement des lecteurs…" />;
 
   const actifsCount = lecteurs.filter((l) => !l.archived).length;
-  const capaciteMax = 200;
-  const plein = actifsCount >= capaciteMax;
 
   return (
     <div>
       <PageHeader
         title="Lecteurs"
-        sub={`${actifsCount} lecteur(s) actif(s) / ${capaciteMax} max${plein ? ' — capacité atteinte' : ''}`}
+        sub={`${actifsCount} lecteur(s) actif(s)`}
         actions={
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
             <BtnGhost
@@ -286,17 +286,12 @@ export default function Lecteurs() {
             >
               ⬇ Export PDF ({filtered.length})
             </BtnGhost>
-            <BtnPrimary onClick={openCreate} disabled={plein} title={plein ? `Capacité maximale ${capaciteMax} atteinte` : undefined} className="w-full sm:w-auto">
+            <BtnPrimary onClick={openCreate} className="w-full sm:w-auto">
               + Nouveau lecteur
             </BtnPrimary>
           </div>
         }
       />
-      {plein && (
-        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          Capacité maximale de {capaciteMax} lecteurs actifs atteinte. Archivez un lecteur avant d'en créer un nouveau.
-        </div>
-      )}
 
       <div className="mb-3 grid gap-2 sm:flex sm:flex-wrap sm:items-center">
         <div className="flex rounded-lg border border-slate-200 bg-white p-0.5">

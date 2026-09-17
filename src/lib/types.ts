@@ -106,6 +106,18 @@ export interface CaisseOperation {
   created_at: string;
 }
 
+export type TypePermission = 'un_samedi' | 'plusieurs_samedis';
+
+export interface Permission {
+  id: string;
+  lecteur_id: string;
+  type_permission: TypePermission;
+  samedis: string[];
+  motif: string;
+  created_by: string | null;
+  created_at: string;
+}
+
 export type NatureAppreciation = 'positive' | 'avertissement' | 'blame';
 
 export interface Appreciation {

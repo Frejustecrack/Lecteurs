@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { toutesLesLignes } from '../lib/pagination';
 import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
+import { useDebounce } from '../lib/useDebounce';
 import {
   dateISO,
   deplaceMois,
@@ -55,6 +56,7 @@ export default function Presences() {
   const [semaine, setSemaine] = useState<Date>(lundiDeSemaine(now));
   const [fId, setFId] = useState('');
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 300);
 
   const [lecteurs, setLecteurs] = useState<Lecteur[]>([]);
   const [fraternites, setFraternites] = useState<Fraternite[]>([]);
@@ -132,7 +134,7 @@ export default function Presences() {
   }, [presences]);
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = debouncedSearch.trim().toLowerCase();
     return lecteurs.filter((l) => {
       if (fId && l.fraternite_id !== fId) return false;
       if (!q) return true;

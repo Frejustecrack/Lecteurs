@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import {
+  aujourdhuiBenin,
   dateISO,
   deplaceMois,
   fmtDate,
@@ -23,8 +24,10 @@ import {
   type Lecteur,
   type LecteurGrade,
   type NatureAppreciation,
+  type Permission,
   type Presence,
   type Profile,
+  type TypePermission,
 } from '../lib/types';
 import {
   Badge,
@@ -105,6 +108,7 @@ export default function LecteurProfil() {
   const [cotisations, setCotisations] = useState<Cotisation[]>([]);
   const [evenements, setEvenements] = useState<Evenement[]>([]);
   const [apprises, setAprises] = useState<Appreciation[]>([]);
+  const [permissions, setPermissions] = useState<Permission[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [montantCot, setMontantCot] = useState(50);
 
@@ -144,7 +148,7 @@ export default function LecteurProfil() {
   const load = useCallback(async () => {
     if (!id) return;
     // Optimisé 200 : selects minimaux, évite select * sur 52 samedis + évite in() overflow via jointure
-    const [rL, rG, rH, rP, rC, rPartJoin, rA, rProf, rSet] = await Promise.all([
+    const [rL, rG, rH, rP, rC, rPartJoin, rA, rProf, rSet, rPerm] = await Promise.all([
       supabase.from('lecteurs').select('*').eq('id', id).maybeSingle(),
       supabase.from('grades').select('id, nom').order('id'),
       supabase
@@ -173,6 +177,11 @@ export default function LecteurProfil() {
         .eq('lecteur_id', id),
       supabase.from('profiles').select('id, full_name'),
       supabase.from('app_settings').select('value').eq('key', 'montant_cotisation').maybeSingle(),
+      supabase
+        .from('permissions')
+        .select('id, lecteur_id, type_permission, samedis, motif, created_by, created_at')
+        .eq('lecteur_id', id)
+        .order('created_at', { ascending: false }),
     ]);
     const lecteur = (rL.data as Lecteur | null) ?? null;
     if (!lecteur) {
@@ -185,6 +194,7 @@ export default function LecteurProfil() {
     setPresences((rP.data ?? []) as Presence[]);
     setCotisations((rC.data ?? []) as Cotisation[]);
     setAprises((rA.data ?? []) as Appreciation[]);
+    setPermissions((rPerm.data ?? []) as Permission[]);
     setProfiles((rProf.data ?? []) as Profile[]);
     if (rSet.data) setMontantCot(Number(rSet.data.value) || 50);
 
@@ -206,6 +216,7 @@ export default function LecteurProfil() {
     { table: 'presences', filter: `lecteur_id=eq.${id}` },
     { table: 'cotisations', filter: `lecteur_id=eq.${id}` },
     { table: 'lecteurs', event: 'UPDATE', filter: `id=eq.${id}` },
+    { table: 'permissions', filter: `lecteur_id=eq.${id}` },
   ], load);
 
   // Le select de fraternité suit la fiche chargée (y compris après un
@@ -638,6 +649,55 @@ export default function LecteurProfil() {
                     <span className="text-slate-500">{fmtDate(e.date_evenement)}</span>
                   </li>
                 ))}
+              </ul>
+            )}
+          </div>
+
+          {/* Permissions */}
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h3 className="mb-3 text-sm font-bold text-slate-700">
+              Permissions ({permissions.length})
+            </h3>
+            {permissions.length === 0 ? (
+              <p className="text-sm text-slate-400">Aucune permission enregistrée.</p>
+            ) : (
+              <ul className="space-y-2">
+                {permissions.map((perm) => {
+                  const auj = dateISO(aujourdhuiBenin());
+                  const enCours = perm.samedis.some((s) => s >= auj);
+                  const typePermLabels: Record<TypePermission, string> = {
+                    un_samedi: 'Un samedi',
+                    plusieurs_samedis: 'Plusieurs samedis',
+                  };
+                  return (
+                    <li
+                      key={perm.id}
+                      className={`rounded-lg border p-3 text-sm ${
+                        enCours
+                          ? 'border-emerald-200 bg-emerald-50'
+                          : 'border-slate-200 bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <Badge tone={enCours ? 'green' : 'gray'}>
+                            {enCours ? 'En cours' : 'Terminée'}
+                          </Badge>
+                          <Badge tone="blue">{typePermLabels[perm.type_permission]}</Badge>
+                        </div>
+                      </div>
+                      <div className="mt-2 text-xs text-slate-600">
+                        <span className="font-semibold">
+                          {perm.samedis.length} samedi{perm.samedis.length > 1 ? 's' : ''} :
+                        </span>{' '}
+                        {perm.samedis.map((s) => fmtDate(s)).join(', ')}
+                      </div>
+                      <p className="mt-1 text-xs italic text-slate-500 break-words">
+                        « {perm.motif} »
+                      </p>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>

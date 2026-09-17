@@ -82,7 +82,7 @@ export default function Login() {
             C
           </div>
           <h1 className="mt-4 text-2xl font-extrabold">
-            CDLJ <span className="font-semibold text-white/85">Akogbato</span>
+            Lecteurs Juniors <span className="font-semibold text-white/85">à Akogbato</span>
           </h1>
           <p className="mt-1 text-sm italic text-white/85">
             « Lecteurs, sel et lumière nous sommes »
