@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import { useDebounce } from '../lib/useDebounce';
 import { fmtDateHeure } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
 import type { LogEntry, Profile, Role } from '../lib/types';
@@ -28,6 +29,7 @@ export default function Admin() {
   const [montantCot, setMontantCot] = useState('50');
   const [loading, setLoading] = useState(true);
   const [qLog, setQLog] = useState('');
+  const debouncedQLog = useDebounce(qLog, 300);
   const [busyRole, setBusyRole] = useState<string | null>(null);
   const [busyMontant, setBusyMontant] = useState(false);
 
@@ -113,12 +115,12 @@ export default function Admin() {
 
   if (loading) return <Spinner label="Chargement de l'administration…" />;
 
-  const logsFiltres = qLog
+  const logsFiltres = debouncedQLog
     ? logs.filter(
         (l) =>
-          l.action.toLowerCase().includes(qLog.toLowerCase()) ||
-          (l.objet_ref ?? '').toLowerCase().includes(qLog.toLowerCase()) ||
-          (l.user_name ?? '').toLowerCase().includes(qLog.toLowerCase())
+          l.action.toLowerCase().includes(debouncedQLog.toLowerCase()) ||
+          (l.objet_ref ?? '').toLowerCase().includes(debouncedQLog.toLowerCase()) ||
+          (l.user_name ?? '').toLowerCase().includes(debouncedQLog.toLowerCase())
       )
     : logs;
 

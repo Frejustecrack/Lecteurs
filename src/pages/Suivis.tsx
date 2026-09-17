@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { toutesLesLignes } from '../lib/pagination';
 import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
+import { useDebounce } from '../lib/useDebounce';
 import { traduireErreur } from '../lib/errors';
 import { journaliserExport } from '../lib/journal';
 import {
@@ -90,6 +91,7 @@ export default function Suivis() {
   const [filtre, setFiltre] = useState<FiltreRecap>('tous');
   const [fId, setFId] = useState('');
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 300);
   const [tri, setTri] = useState<TriRecap>('nom');
   const [triAsc, setTriAsc] = useState(true);
 
@@ -178,7 +180,7 @@ export default function Suivis() {
   );
 
   const filtres = useMemo(
-    () => filtrerRecaps(recaps, { fraterniteId: fId, recherche: search, filtre }),
+    () => filtrerRecaps(recaps, { fraterniteId: fId, recherche: debouncedSearch, filtre }),
     [recaps, fId, search, filtre]
   );
 

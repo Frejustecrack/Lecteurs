@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { toutesLesLignes } from '../lib/pagination';
 import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
+import { useDebounce } from '../lib/useDebounce';
 import { fmtDateHeure } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
 import { journaliserExport } from '../lib/journal';
@@ -69,6 +70,7 @@ export default function Lecteurs() {
   const [grades, setGrades] = useState<Grade[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 300);
   const [fId, setFId] = useState('');
   const [gradeId, setGradeId] = useState('');
   const [tab, setTab] = useState<'actifs' | 'archives'>('actifs');
@@ -109,7 +111,7 @@ export default function Lecteurs() {
   useRealtime('realtime-lecteurs', ['lecteurs', 'fraternites'], load);
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = debouncedSearch.trim().toLowerCase();
     return lecteurs.filter((l) => {
       if (tab === 'actifs' ? l.archived : !l.archived) return false;
       if (fId && l.fraternite_id !== fId) return false;

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
+import { useDebounce } from '../lib/useDebounce';
 import {
   aujourdhuiBenin,
   dateISO,
@@ -78,6 +79,7 @@ export default function Permissions() {
   const [fId, setFId] = useState('');
   const [gradeId, setGradeId] = useState('');
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 300);
 
   // ---- modale création
   const [formOpen, setFormOpen] = useState(false);
@@ -126,7 +128,7 @@ export default function Permissions() {
 
   // ---------------------------------------------------- filtrage + recherche
   const liste = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = debouncedSearch.trim().toLowerCase();
     return permissions
       .map((p) => ({ ...p, statut: statutPermission(p) }))
       .filter((p) => {
