@@ -182,7 +182,6 @@ export default function Layout() {
             </svg>
           </button>
           <div className="text-sm font-extrabold text-cdlj">Lecteurs Juniors à Akogbato</div>
-          <div className="text-sm font-extrabold text-cdlj">Lecteurs Juniors à Akogbato</div>
           <button
             onClick={logout}
             className={`rounded-lg p-2 text-slate-400 hover:bg-slate-100 ${pressCls}`}
