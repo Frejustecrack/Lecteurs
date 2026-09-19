@@ -1,3 +1,4 @@
+import { comparerLecteurs, trierLecteurs } from '../lib/lecteurs';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
@@ -321,7 +322,7 @@ export function exportCotisations(args: {
   const head = [
     ['Matricule', 'Nom', 'Prénom', ...samedisIso.map((s) => s.slice(5).split('-').reverse().join('/')), 'Total payé', 'Total dû'],
   ];
-  const body = lecteurs.map((l) => {
+  const body = trierLecteurs(lecteurs).map((l) => {
     let paye = 0;
     let du = 0;
     const cells = samedisIso.map((s) => {
@@ -398,7 +399,7 @@ export function exportPresences(args: {
   const head = [
     ['Matricule', 'Nom', 'Prénom', ...samedisIso.map((s) => s.slice(5).split('-').reverse().join('/')), 'Présents', 'Absents'],
   ];
-  const body = lecteurs.map((l) => {
+  const body = trierLecteurs(lecteurs).map((l) => {
     let pres = 0;
     let abs = 0;
     const cells = samedisIso.map((s) => {
@@ -499,7 +500,7 @@ export function exportEvenementBilan(args: {
   const head = [
     ['Matricule', 'Nom', 'Prénom', 'Tranches payées', 'Total payé', 'Restant', 'Statut'],
   ];
-  const body = participants.map(({ lecteur: l, paye, tranches }) => {
+  const body = [...participants].sort((a, b) => comparerLecteurs(a.lecteur, b.lecteur)).map(({ lecteur: l, paye, tranches }) => {
     const restant = Math.max(e.montant_participation - paye, 0);
     const statut =
       e.montant_participation > 0 && paye >= e.montant_participation
@@ -776,9 +777,7 @@ export function exportListeLecteurs(args: {
     auteur
   );
 
-  const tries = [...lecteurs].sort((a, b) =>
-    a.matricule.localeCompare(b.matricule)
-  );
+  const tries = trierLecteurs(lecteurs);
   const head = [
     [
       'N°',
@@ -873,7 +872,7 @@ export function exportSuivis(args: {
   const head = [
     ['Matricule', 'Nom', 'Prénom', 'Fraternité', 'Présences', 'Absences', 'Non pointé', 'Taux'],
   ];
-  const body = recaps.map((r) => [
+  const body = [...recaps].sort((a, b) => comparerLecteurs(a.lecteur, b.lecteur)).map((r) => [
     r.lecteur.matricule,
     r.lecteur.nom.toUpperCase(),
     r.lecteur.prenom,

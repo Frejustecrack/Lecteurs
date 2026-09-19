@@ -1,3 +1,4 @@
+import { trierLecteurs } from '../lib/lecteurs';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -99,13 +100,13 @@ export default function Cotisations() {
           .from('lecteurs')
           .select('id, matricule, nom, prenom, fraternite_id, archived, created_at')
           .eq('archived', false)
-          .order('matricule')
+          .order('nom').order('prenom').order('matricule')
           .range(de, a)
       ),
       supabase.from('fraternites').select('id, nom').order('nom'),
       supabase.from('app_settings').select('value').eq('key', 'montant_cotisation').maybeSingle(),
     ]);
-    setLecteurs((rL.data ?? []) as Lecteur[]);
+    setLecteurs(trierLecteurs((rL.data ?? []) as Lecteur[]));
     setFraternites((rF.data ?? []) as Fraternite[]);
     if (rSet.data) setMontantCot(Number(rSet.data.value) || 50);
 
@@ -152,7 +153,7 @@ export default function Cotisations() {
         l.prenom.toLowerCase().includes(q)
       );
     });
-  }, [lecteurs, fId, search]);
+  }, [lecteurs, fId, debouncedSearch]);
 
   async function toggle(l: Lecteur, sam: string) {
     if (estAvantPremierSamediActif(sam, l.created_at)) {

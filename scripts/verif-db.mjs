@@ -254,6 +254,38 @@ await attendOk('admin corrige un samedi gelé', 'admin',
   if (r[0]?.action === 'presence.correction_gelee') ok('la correction gelée est journalisée par le trigger (presence.correction_gelee)');
   else ko('journal correction gelée', JSON.stringify(r[0]));
 }
+// Toute présence future est verrouillée pour TOUS les rôles, Admin inclus.
+section('4b. Présences futures interdites, données historiques préservées');
+for (const role of ['admin', 'co', 'co_paroissial', 'caissier', 'responsable', 'sans_role']) {
+  await attendRefus(`${role} ne peut pas créer une présence future`, role,
+    `insert into public.presences (lecteur_id, date_samedi, statut) values ($1, $2, 'present') returning id`, [l1.id, futur]);
+  await attendRefus(`${role} ne peut pas déplacer une présence vers le futur`, role,
+    `update public.presences set date_samedi = $2 where lecteur_id = $1 and date_samedi = $3 returning id`, [l1.id, futur, dernier]);
+}
+// Simule une ligne déjà présente en production AVANT la nouvelle règle.
+await enAdminSql(`insert into public.presences (lecteur_id, date_samedi, statut) values ($1, $2, 'present')`, [l1.id, futur]);
+await db.exec(readFileSync(join(dossierMigrations, '20260919200000_interdire_presences_futures.sql'), 'utf8'));
+for (const role of ['admin', 'co', 'co_paroissial', 'caissier', 'responsable', 'sans_role']) {
+  await attendRefus(`${role} ne modifie pas une présence future existante`, role,
+    `update public.presences set statut = 'absent' where lecteur_id = $1 and date_samedi = $2 returning id`, [l1.id, futur]);
+  await attendRefus(`${role} ne supprime pas une présence future existante`, role,
+    `delete from public.presences where lecteur_id = $1 and date_samedi = $2 returning id`, [l1.id, futur]);
+  await attendRefus(`${role} ne contourne pas la règle par upsert`, role,
+    `insert into public.presences (lecteur_id, date_samedi, statut) values ($1, $2, 'absent')
+     on conflict (lecteur_id, date_samedi) do update set statut = excluded.statut returning id`, [l1.id, futur]);
+}
+await attendRefus('Admin ne déplace pas une ancienne présence future vers le passé', 'admin',
+  `update public.presences set date_samedi = $3::date - 14 where lecteur_id = $1 and date_samedi = $2 returning id`, [l1.id, futur, dernier]);
+const historiqueFutur = await en('admin', `select statut from public.presences where lecteur_id=$1 and date_samedi=$2`, [l1.id, futur]);
+if (historiqueFutur.rows?.[0]?.statut === 'present') ok('migration non destructive : présence future historique préservée et lisible');
+else ko('présence future historique préservée');
+await enAdminSql(`delete from public.presences where lecteur_id=$1 and date_samedi=$2`, [l1.id, futur]);
+await attendRefus('compte sans rôle ne modifie pas non plus le samedi courant', 'sans_role',
+  `update public.presences set statut = 'absent' where lecteur_id=$1 and date_samedi=$2 returning id`, [l1.id, dernier]);
+await attendOk('Caissier peut toujours payer une cotisation future', 'caissier',
+  `insert into public.cotisations (lecteur_id, date_samedi, paye) values ($1, $2, true) returning id`, [l1.id, futur]);
+await en('caissier', `delete from public.cotisations where lecteur_id=$1 and date_samedi=$2`, [l1.id, futur]);
+
 await attendRefus('responsable ne supprime pas une présence', 'responsable', `delete from public.presences where lecteur_id = $1 returning id`, [l1.id]);
 
 // ---------------------------------------------------------------------------
@@ -306,8 +338,8 @@ section('5c. Contraintes métier');
   const mardi = (await enAdminSql(`select (public.dernier_samedi() + 3)::text d`))[0].d;
   await attendRefus('présence un mardi refusée', 'admin', `insert into public.presences (lecteur_id, date_samedi, statut) values ($1, $2, 'present') returning id`, [l1.id, mardi]);
   await attendRefus('cotisation un mardi refusée', 'caissier', `insert into public.cotisations (lecteur_id, date_samedi, paye) values ($1, $2, true) returning id`, [l1.id, mardi]);
-  // l2 est archivé (§3) : aucune saisie possible. On le vérifie sur un samedi futur (pas de conflit).
-  await attendRefus('présence sur lecteur archivé refusée', 'admin', `insert into public.presences (lecteur_id, date_samedi, statut) values ($1, $2, 'present') returning id`, [l2.id, futur]);
+  // l2 est archivé (§3) : le samedi courant isole bien le refus pour archivage, pas la règle des présences futures.
+  await attendRefus('présence sur lecteur archivé refusée', 'admin', `insert into public.presences (lecteur_id, date_samedi, statut) values ($1, $2, 'present') returning id`, [l2.id, dernier]);
   await attendRefus('cotisation sur lecteur archivé refusée', 'caissier', `insert into public.cotisations (lecteur_id, date_samedi, paye) values ($1, $2, true) returning id`, [l2.id, futur]);
   const auj = (await enAdminSql(`select public.aujourdhui_benin()::text a, (now() at time zone 'Africa/Lagos')::date::text b`))[0];
   if (auj.a === auj.b) ok(`aujourdhui_benin() = ${auj.a} (Africa/Lagos)`); else ko('aujourdhui_benin', JSON.stringify(auj));

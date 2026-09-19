@@ -1,3 +1,4 @@
+import { trierLecteurs } from '../lib/lecteurs';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -45,12 +46,12 @@ export default function Fraternites() {
           .from('lecteurs')
           .select('id, matricule, nom, prenom, fraternite_id, archived')
           .eq('archived', false)
-          .order('matricule')
+          .order('nom').order('prenom').order('matricule')
           .range(de, a)
       ),
     ]);
     setFraternites((rF.data ?? []) as Fraternite[]);
-    setLecteurs((rL.data ?? []) as Lecteur[]);
+    setLecteurs(trierLecteurs((rL.data ?? []) as Lecteur[]));
     setLoading(false);
   }, []);
 

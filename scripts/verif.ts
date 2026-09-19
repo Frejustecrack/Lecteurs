@@ -1,3 +1,4 @@
+import { comparerLecteurs, rechercherLecteurs, trierLecteurs } from '../src/lib/lecteurs.ts';
 /**
  * Vérification de la logique métier pure (aucune dépendance, aucun serveur).
  *
@@ -52,6 +53,30 @@ function verif(nom: string, condition: boolean, detail = '') {
     console.log(`  ✗ ${nom}${detail ? ` — ${detail}` : ''}`);
   }
 }
+
+// Tri commun écrans/PDF et recherche d'inscription (accents, homonymes).
+{
+  const noms = [
+    { nom: 'Zinsou', prenom: 'Anne', matricule: 'LEC100' },
+    { nom: 'Éhouman', prenom: 'Zoé', matricule: 'LEC101' },
+    { nom: 'dossou', prenom: 'Marc', matricule: 'LEC202' },
+    { nom: 'DOSSOU', prenom: 'Alice', matricule: 'LEC201' },
+    { nom: 'Dossou', prenom: 'Alice', matricule: 'LEC103' },
+  ];
+  const avant = JSON.stringify(noms);
+  verif('tri alphabétique : nom, prénom, puis matricule',
+    trierLecteurs(noms).map(l => l.matricule).join(',') === 'LEC103,LEC201,LEC202,LEC101,LEC100');
+  verif('tri sans mutation du tableau source', JSON.stringify(noms) === avant);
+  verif('tri français indépendant de la casse et des accents',
+    comparerLecteurs({ nom: 'éhouman', prenom: 'zoe', matricule: 'LEC101' }, noms[1]) === 0);
+  verif('recherche par nom sans casse', rechercherLecteurs(noms, 'DOSsou').length === 3);
+  verif('recherche sans accent et par prénom', rechercherLecteurs(noms, 'ehouman zoe')[0]?.matricule === 'LEC101');
+  verif('recherche par matricule partiel', rechercherLecteurs(noms, 'lec20').length === 2);
+  verif('homonymes distingués par matricule', rechercherLecteurs(noms, 'alice').map(l => l.matricule).join(',') === 'LEC103,LEC201');
+  verif('recherche vide : tous les lecteurs par nom', rechercherLecteurs(noms, '  ')[0]?.matricule === 'LEC103');
+  verif('recherche sans résultat', rechercherLecteurs(noms, 'inexistant').length === 0);
+}
+
 
 function eq(nom: string, obtenu: unknown, attendu: unknown) {
   verif(nom, obtenu === attendu, `obtenu ${JSON.stringify(obtenu)}, attendu ${JSON.stringify(attendu)}`);

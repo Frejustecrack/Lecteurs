@@ -187,7 +187,7 @@ Recommandé : **Authentication → Settings** → désactiver *Enable email sign
 | **Présences** | `/presences` | **Vue mensuelle** (3-5 samedis, `overflow-x`) ou **hebdomadaire** (1 samedi, **cartes sur mobile sans scroll**, tableau compact sur desktop). Légende en **chips** aux couleurs des cellules (vert / rouge / gris pointillé). Gel automatique des samedis passés (RLS `dernier_samedi()`), correction Admin tracée. |
 | **Suivis** | `/suivis` | Récap `present/absent/nonSaisi/taux` via `src/lib/recap.ts`. Filtres *absents / assidus / saisie incomplète*, filtre samedi précis, fraternité, recherche, tri colonnes. Cartes sur mobile, tableau sur desktop. **Export PDF du récapitulatif tel qu'affiché** (mêmes samedis comptés, mêmes filtres, même tri), tracé via `log_action('export.pdf')`. |
 | **Cotisations** | `/cotisations` | 50 F / samedi / lecteur (paramétrable dans `app_settings`). Vue mensuelle/hebdo (même UX que Présences). Saisie **Caissier uniquement**, pas de gel, mois passés modifiables. |
-| **Événements** | `/evenements`, `/evenements/:id` | Création par CO, inscription par matricule, paiements en tranches (trigger `check_tranche` : total ≤ participation), **suppression par CO/Admin** (cascade participants/paiements/caisse + log `evenement.suppression`), **clôture CO** `en_cours→termine` (policy `evenements_update` WITH CHECK) + réouverture Admin. |
+| **Événements** | `/evenements`, `/evenements/:id` | Création par CO, inscription avec recherche par nom/prénom/matricule, paiements en tranches (trigger `check_tranche` : total ≤ participation), **suppression par CO/Admin** (cascade participants/paiements/caisse + log `evenement.suppression`), **clôture CO** `en_cours→termine` (policy `evenements_update` WITH CHECK) + réouverture Admin. |
 | **Caisse** | `/caisse` | Caisse générale = cotisations payées + encaissements − décaissements (`event_id IS NULL`). Opérations CO uniquement. Export PDF. |
 | **Administration** | `/admin` | Logs (400 derniers), comptes & rôles, montant cotisation — **Admin uniquement** (RLS `is_admin()`). |
 
@@ -395,3 +395,33 @@ Le rendu visuel des pages React (classes CSS, responsive) n'est pas testé autom
 ---
 
 *Projet livré par la CDLJ Akogbato — “Lecteurs, sel et lumière nous sommes”.*
+
+
+## Listes alphabétiques, inscription et présences futures (19/09/2026)
+
+- Les listes de lecteurs sont automatiquement triées par **nom de famille**, puis
+  prénom, puis matricule pour les homonymes, selon la collation française (sans
+  distinction de casse/accents). Le helper commun est `src/lib/lecteurs.ts`.
+- Le même ordre est imposé dans les PDF : liste des lecteurs, présences,
+  cotisations, suivis et bilan d'événement. Les filtres restent appliqués.
+- L'inscription à un événement propose une recherche par nom, prénom ou matricule,
+  avec sélection explicite du lecteur. Les archivés et les participants déjà
+  inscrits ne sont pas proposés. Les droits existants ne sont pas élargis.
+- Une présence d'un **samedi futur** est non modifiable par tous les comptes
+  applicatifs, **Admin compris** : création, modification, déplacement de date,
+  upsert et suppression sont bloqués par RLS. La date de référence est celle du
+  Bénin (`aujourdhui_benin()`). Le gel des anciens samedis reste inchangé.
+- Les **cotisations futures restent autorisées** selon leurs droits habituels.
+
+### Déploiement sans perte de données
+
+Appliquer la nouvelle migration
+`supabase/migrations/20260919200000_interdire_presences_futures.sql` par le processus
+habituel de déploiement Supabase, en complément du frontend. Elle ajoute des
+policies restrictives et ne modifie/supprime aucune donnée. Les éventuelles
+présences futures déjà en base restent lisibles, mais sont verrouillées jusqu'au
+samedi concerné. Ne pas réinitialiser la base ni rejouer les scripts de nettoyage.
+
+Vérifications : `npm run verif:all` et `npm run build`. Les tests couvrent notamment
+les homonymes/accents, le tri réel des cinq PDF et le blocage des présences futures
+pour tous les rôles, y compris les lignes historiques et les upserts.

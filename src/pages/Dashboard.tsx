@@ -1,3 +1,4 @@
+import { trierLecteurs } from '../lib/lecteurs';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
@@ -168,7 +169,7 @@ export default function Dashboard() {
       }))
     );
 
-    setLecteurs((rDerniers.data ?? []) as Lecteur[]);
+    setLecteurs(trierLecteurs((rDerniers.data ?? []) as Lecteur[]));
     setLoading(false);
   }
 

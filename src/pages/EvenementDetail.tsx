@@ -1,3 +1,5 @@
+import { toutesLesLignes } from '../lib/pagination';
+import { comparerLecteurs, rechercherLecteurs, trierLecteurs } from '../lib/lecteurs';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -32,6 +34,8 @@ import {
 } from '../components/ui';
 import { exportEvenementBilan } from '../pdf/export';
 
+type Candidat = Pick<Lecteur, 'id' | 'nom' | 'prenom' | 'matricule' | 'archived'>;
+
 type StatutPaiement = 'solde_regle' | 'partiel' | 'non_paye';
 
 function statutDe(paye: number, participation: number): StatutPaiement {
@@ -55,7 +59,9 @@ export default function EvenementDetail() {
   const [ops, setOps] = useState<CaisseOperation[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [matricule, setMatricule] = useState('');
+  const [rechercheInscription, setRechercheInscription] = useState('');
+  const [candidats, setCandidats] = useState<Candidat[]>([]);
+  const [erreurCandidats, setErreurCandidats] = useState(false);
   const [filtre, setFiltre] = useState<'' | StatutPaiement>('');
   const [trancheOuverte, setTrancheOuverte] = useState<string | null>(null);
   const [montantTranche, setMontantTranche] = useState('');
@@ -92,7 +98,7 @@ export default function EvenementDetail() {
     setE(ev);
     // Optimisé pour 200 participants max : une seule requête avec jointure
     // évite le `in('id', [200 UUIDs])` qui dépasse la limite d'URL PostgREST
-    const [rPartAvecLecteurs, rP, rO] = await Promise.all([
+    const [rPartAvecLecteurs, rP, rO, rL] = await Promise.all([
       supabase
         .from('evenement_participants')
         .select('lecteur_id, lecteurs(id, matricule, nom, prenom, archived, fraternite_id, grade_id)')
@@ -107,11 +113,17 @@ export default function EvenementDetail() {
         .select('id, type, montant, motif, created_at')
         .eq('event_id', id)
         .order('created_at'),
+      toutesLesLignes<Candidat>((de, a) => supabase.from('lecteurs')
+        .select('id, matricule, nom, prenom, archived')
+        .eq('archived', false)
+        .order('nom').order('prenom').order('matricule').range(de, a)),
     ]);
+    setErreurCandidats(Boolean(rL.error || rPartAvecLecteurs.error));
+    setCandidats(rL.error || rPartAvecLecteurs.error ? [] : rL.data);
     const lecteursFromJoin = (rPartAvecLecteurs.data ?? [])
       .map((r: any) => r.lecteurs)
       .filter(Boolean) as Lecteur[];
-    setLecteurs(lecteursFromJoin);
+    setLecteurs(trierLecteurs(lecteursFromJoin));
     setPaiements((rP.data ?? []) as EvenementPaiement[]);
     setOps((rO.data ?? []) as CaisseOperation[]);
     setLoading(false);
@@ -132,12 +144,21 @@ export default function EvenementDetail() {
     { table: 'evenement_paiements', filter: `event_id=eq.${id}` },
     { table: 'caisse_operations', filter: `event_id=eq.${id}` },
     { table: 'evenements', filter: `id=eq.${id}` },
+    'lecteurs',
   ], load);
 
-  /** Paiements et opérations triés du plus récent au plus ancien. */
+  // Perf 200 : Map O(1) au lieu de find() O(n) dans 200 rendus d'historique
+  const lecteursMap = useMemo(() => new Map(lecteurs.map((l) => [l.id, l])), [lecteurs]);
+  const lecteurById = useCallback((lid: string) => lecteursMap.get(lid), [lecteursMap]);
+
+  /** Paiements par nom de lecteur, puis date ; opérations sans lecteur par date. */
   const paiementsTri = useMemo(
-    () => [...paiements].sort((a, b) => (a.paye_at < b.paye_at ? 1 : -1)),
-    [paiements]
+    () => [...paiements].sort((a, b) => {
+      const la = lecteursMap.get(a.lecteur_id);
+      const lb = lecteursMap.get(b.lecteur_id);
+      return (la && lb ? comparerLecteurs(la, lb) : 0) || b.paye_at.localeCompare(a.paye_at);
+    }),
+    [paiements, lecteursMap]
   );
   const opsTri = useMemo(
     () => [...ops].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)),
@@ -209,52 +230,44 @@ export default function EvenementDetail() {
   /** Pourcentage de participations déjà versées. */
   const avancement = pct(totalCollecte, totalAttendu);
 
-  // Perf 200 : Map O(1) au lieu de find() O(n) dans 200 rendus d'historique
-  const lecteursMap = useMemo(() => new Map(lecteurs.map((l) => [l.id, l])), [lecteurs]);
-  const lecteurById = useCallback((lid: string) => lecteursMap.get(lid), [lecteursMap]);
+  const candidatsFiltres = useMemo(() => {
+    const inscrits = new Set(lecteurs.map((l) => l.id));
+    return rechercherLecteurs(candidats.filter((l) => !inscrits.has(l.id)), rechercheInscription);
+  }, [candidats, lecteurs, rechercheInscription]);
 
   if (loading || !e) return <Spinner label="Chargement de l'événement…" />;
 
-  async function inscrire() {
-    const q = matricule.trim().toUpperCase();
-    if (!q || !enCours) return;
+  async function inscrire(l: Candidat) {
+    if (!enCours || busyInscription) return;
     setBusyInscription(true);
-    const { data: l } = await supabase
-      .from('lecteurs')
-      .select('id, matricule, nom, prenom, archived')
-      .eq('matricule', q)
-      .maybeSingle();
-    if (!l) {
+    try {
+      const { data: deja, error: erreurVerification } = await supabase
+        .from('evenement_participants')
+        .select('id')
+        .eq('event_id', e!.id)
+        .eq('lecteur_id', l.id)
+        .maybeSingle();
+      if (erreurVerification) throw erreurVerification;
+      if (deja) {
+        toast(`${l.matricule} est déjà inscrit à cet événement.`, 'err');
+        await load();
+        return;
+      }
+      // Les triggers/RLS restent l'autorité si le lecteur est archivé ou
+      // l'événement clôturé entre la recherche et le clic sur « Inscrire ».
+      const { error } = await supabase.from('evenement_participants').insert({
+        event_id: e!.id,
+        lecteur_id: l.id,
+      });
+      if (error) throw error;
+      setRechercheInscription('');
+      setCandidats((actuels) => actuels.filter((c) => c.id !== l.id));
+      toast(`${l.matricule} — ${l.prenom} ${l.nom} inscrit.`);
+      await load();
+    } catch (error) {
+      toast(traduireErreur(error, "inscrire ce lecteur à l'événement"), 'err');
+    } finally {
       setBusyInscription(false);
-      toast(`Le matricule ${q} est introuvable.`, 'err');
-      return;
-    }
-    if ((l as Lecteur).archived) {
-      setBusyInscription(false);
-      toast('Ce lecteur est archivé : il ne peut pas être inscrit.', 'err');
-      return;
-    }
-    const { data: deja } = await supabase
-      .from('evenement_participants')
-      .select('id')
-      .eq('event_id', e!.id)
-      .eq('lecteur_id', (l as Lecteur).id)
-      .maybeSingle();
-    if (deja) {
-      setBusyInscription(false);
-      toast(`${q} est déjà inscrit à cet événement.`, 'err');
-      return;
-    }
-    const { error } = await supabase.from('evenement_participants').insert({
-      event_id: e!.id,
-      lecteur_id: (l as Lecteur).id,
-    });
-    setBusyInscription(false);
-    if (error) toast(traduireErreur(error, 'inscrire ce lecteur à l\'événement'), 'err');
-    else {
-      setMatricule('');
-      toast(`${(l as Lecteur).matricule} — ${(l as Lecteur).prenom} ${(l as Lecteur).nom} inscrit.`);
-      load();
     }
   }
 
@@ -584,26 +597,53 @@ export default function EvenementDetail() {
       {enCours && (
         <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <h3 className="mb-2 text-sm font-bold text-slate-700">
-            Inscrire un lecteur (par matricule)
+            Inscrire un lecteur
           </h3>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <input
-              value={matricule}
-              onChange={(ev) => setMatricule(ev.target.value.toUpperCase())}
-              placeholder="Ex. LEC101"
-              aria-label="Matricule du lecteur à inscrire"
-              className={`${inputCls} w-full font-mono sm:max-w-[180px]`}
-              onKeyDown={(ev) => ev.key === 'Enter' && inscrire()}
-            />
-            <BtnPrimary
-              onClick={inscrire}
-              busy={busyInscription}
-              busyLabel="Inscription…"
-              className="w-full sm:w-auto"
-            >
-              Inscrire
-            </BtnPrimary>
-          </div>
+          <label htmlFor="recherche-participant" className="mb-1 block text-sm text-slate-600">
+            Rechercher par nom, prénom ou matricule
+          </label>
+          <input
+            id="recherche-participant"
+            type="search"
+            value={rechercheInscription}
+            onChange={(ev) => setRechercheInscription(ev.target.value)}
+            placeholder="Ex. Dossou, Marie ou LEC101"
+            className={`${inputCls} w-full`}
+            aria-describedby="resultats-participants"
+          />
+          {erreurCandidats ? (
+            <div role="alert" className="mt-3 text-sm text-red-700">
+              Impossible de charger les lecteurs disponibles.
+              <BtnGhost onClick={load}>Réessayer</BtnGhost>
+            </div>
+          ) : (
+            <>
+              <p id="resultats-participants" role="status" className="my-2 text-xs text-slate-500">
+                {candidatsFiltres.length} lecteur(s) disponible(s) — les lecteurs archivés et déjà inscrits sont exclus.
+              </p>
+              <ul className="max-h-72 overflow-y-auto divide-y divide-slate-100">
+                {candidatsFiltres.map((l) => (
+                  <li key={l.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0 break-words text-sm">
+                      <span className="font-semibold">{l.nom.toUpperCase()} {l.prenom}</span>
+                      <span className="mt-0.5 block font-mono text-xs text-slate-500">{l.matricule}</span>
+                    </div>
+                    <BtnPrimary
+                      onClick={() => inscrire(l)}
+                      disabled={busyInscription}
+                      aria-label={`Inscrire ${l.nom} ${l.prenom}, ${l.matricule}`}
+                      className="w-full shrink-0 sm:w-auto"
+                    >
+                      {busyInscription ? 'Inscription…' : 'Inscrire'}
+                    </BtnPrimary>
+                  </li>
+                ))}
+              </ul>
+              {candidatsFiltres.length === 0 && (
+                <p className="py-3 text-sm text-slate-500">Aucun lecteur disponible ne correspond à votre recherche.</p>
+              )}
+            </>
+          )}
         </div>
       )}
 
