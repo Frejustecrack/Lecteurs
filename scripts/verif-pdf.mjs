@@ -12,6 +12,7 @@
  *   - les fichiers sont écrits dans `tmp/pdf/` pour contrôle visuel.
  */
 import { build } from 'vite';
+import { samediEstArrive } from '../src/lib/dates.ts';
 import { mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -148,8 +149,11 @@ console.log('\n3. Contenu de la fiche des présences');
   const nbPres = compte('Pres');
   const nbAbs = compte('Abs');
   const attenduPres = presences.filter((x) => x.statut === 'present').length;
-  // Absents = statut absent + lecteur 2 non pointé sur les 4 samedis (tous arrivés au 16/09 ? non : seuls 05 et 12).
-  const arrives = samedis.filter((s) => new Date(`${s}T12:00:00`) <= new Date()).length;
+  // Absents = statut absent + lecteur 2 non pointé sur les samedis arrivés.
+  // Même règle que l'app (samediEstArrive : arrivé dès minuit, heure du Bénin) —
+  // l'ancienne heuristique « midi local » faisait échouer le test tout samedi
+  // avant midi si la liste contient le samedi du jour.
+  const arrives = samedis.filter(samediEstArrive).length;
   const attenduAbs = presences.filter((x) => x.statut === 'absent').length + arrives; // lecteur 2 non pointé
   if (nbPres === attenduPres) ok(`« Pres » apparaît ${nbPres} fois (= présences)`); else ko('« Pres »', `${nbPres} ≠ ${attenduPres}`);
   if (nbAbs === attenduAbs) ok(`« Abs » apparaît ${nbAbs} fois (= absents + non pointés sur samedis arrivés)`); else ko('« Abs »', `${nbAbs} ≠ ${attenduAbs}`);

@@ -195,10 +195,15 @@ const frat = await attendOk('responsable crée une fraternité', 'responsable', 
 const fratId = frat.rows[0].id;
 const frat2 = (await attendOk('caissier crée une fraternité', 'caissier', `insert into public.fraternites (nom) values ('Sainte Thérèse') returning id`)).rows[0].id;
 
+// created_at reculé au 01/01/2020 : les sections 4–5 saisissent des lignes sur
+// le samedi « gelé » (dernier samedi − 7). Avec la règle « premier samedi
+// actif » (entrée en vigueur), un lecteur inscrit aujourd'hui ne peut plus
+// avoir d'historique — backdater évite aussi les faux positifs (refus venant
+// du trigger entrée en vigueur au lieu du gel testé).
 const l1 = (await attendOk('responsable crée un lecteur (matricule auto)', 'responsable',
-  `insert into public.lecteurs (nom, prenom, matricule, fraternite_id) values ('DOSSOU', 'Marc', '', $1) returning id, matricule`, [fratId])).rows[0];
+  `insert into public.lecteurs (nom, prenom, matricule, fraternite_id, created_at) values ('DOSSOU', 'Marc', '', $1, '2020-01-01') returning id, matricule`, [fratId])).rows[0];
 const l2 = (await attendOk('caissier crée un second lecteur', 'caissier',
-  `insert into public.lecteurs (nom, prenom, matricule) values ('AHOUANSOU', 'Léa', '') returning id, matricule`)).rows[0];
+  `insert into public.lecteurs (nom, prenom, matricule, created_at) values ('AHOUANSOU', 'Léa', '', '2020-01-01') returning id, matricule`)).rows[0];
 if (l1.matricule === 'LEC100' && l2.matricule === 'LEC101') ok(`matricules séquentiels : ${l1.matricule}, ${l2.matricule}`);
 else ko('matricules séquentiels', `${l1.matricule}, ${l2.matricule}`);
 
@@ -271,7 +276,7 @@ await attendLignes('admin modifie le montant de cotisation', 'admin',
   `update public.app_settings set value = '100' where key = 'montant_cotisation' returning key`);
 
 section('5b. Auteur et montant forcés par la base');
-const l3 = (await enAdminSql(`insert into public.lecteurs (nom, prenom, matricule) values ('KPOSSOU', 'Ida', '') returning id`))[0];
+const l3 = (await enAdminSql(`insert into public.lecteurs (nom, prenom, matricule, created_at) values ('KPOSSOU', 'Ida', '', '2020-01-01') returning id`))[0];
 {
   // Le client envoie montant = 1 et recorded_by = admin : la base impose 100 et le caissier.
   const r = await attendOk('caissier envoie montant=1, recorded_by=admin', 'caissier',
@@ -408,9 +413,13 @@ await attendRefus('personne n\'écrit directement dans logs', 'admin', `insert i
 section('8. Agrégats & volumétrie (200 lecteurs × 52 samedis)');
 {
   // 200 lecteurs, 52 samedis de cotisations et de présences.
+  // created_at reculé de 2 ans : sinon le trigger « premier samedi actif »
+  // (entrée en vigueur au samedi suivant l'inscription) refuserait — à juste
+  // titre — l'insertion d'un historique d'un an pour des lecteurs créés
+  // aujourd'hui. La volumétrie teste la perf, pas cette règle (voir 8b).
   await db.exec(`
-    insert into public.lecteurs (nom, prenom, matricule)
-    select 'NOM' || g, 'Prenom' || g, '' from generate_series(1, 200) g;
+    insert into public.lecteurs (nom, prenom, matricule, created_at)
+    select 'NOM' || g, 'Prenom' || g, '', now() - interval '2 years' from generate_series(1, 200) g;
   `);
   const n = (await enAdminSql(`select count(*)::int n, max(matricule) m from public.lecteurs`))[0];
   if (n.n === 203 && n.m === 'LEC302') ok(`203 lecteurs, dernier matricule ${n.m}`);
@@ -470,6 +479,48 @@ section('8. Agrégats & volumétrie (200 lecteurs × 52 samedis)');
   const somme = a.rows?.reduce((s, r) => s + Number(r.total), 0);
   if (somme === attendu) ok(`v_cotisations_par_annee : ${a.rows.map((r) => `${r.annee}=${r.total}`).join(', ')}`);
   else ko('v_cotisations_par_annee', JSON.stringify(a.rows ?? a.error?.message));
+}
+
+// ---------------------------------------------------------------------------
+// 8b. Premier samedi actif : protections base (migration 20260919120000)
+// ---------------------------------------------------------------------------
+section('8b. Premier samedi actif (triggers presences/cotisations)');
+{
+  // Fonction pure (fuseau Bénin) : samedi d'inscription → ce samedi ;
+  // autre jour → samedi suivant ; null → 1970 (pas de blocage).
+  const ps = (await enAdminSql(`
+    select public.premier_samedi_actif('2026-09-16 10:00:00+00')::text as mercredi,
+           public.premier_samedi_actif('2026-09-19 10:00:00+00')::text as samedi,
+           public.premier_samedi_actif('2026-09-20 10:00:00+00')::text as dimanche,
+           public.premier_samedi_actif(null)::text as vide`))[0];
+  if (ps.mercredi === '2026-09-19' && ps.samedi === '2026-09-19' && ps.dimanche === '2026-09-26' && ps.vide === '1970-01-01')
+    ok(`premier_samedi_actif : mer ${ps.mercredi}, sam ${ps.samedi}, dim ${ps.dimanche}, null ${ps.vide}`);
+  else ko('premier_samedi_actif', JSON.stringify(ps));
+
+  // LEC103 : lecteur sectaire créé il y a 2 ans (volumétrie). Toute ligne à
+  // PSA − 7 jours doit être rejetée par le trigger (INSERT), même en admin.
+  await attendRefus(
+    'présence avant le premier samedi actif',
+    'admin',
+    `insert into public.presences (lecteur_id, date_samedi, statut)
+     select id, public.premier_samedi_actif(created_at) - 7, 'present'
+       from public.lecteurs where matricule = 'LEC103'`
+  );
+  await attendRefus(
+    'cotisation avant le premier samedi actif',
+    'admin',
+    `insert into public.cotisations (lecteur_id, date_samedi, paye, montant)
+     select id, public.premier_samedi_actif(created_at) - 7, true, 50
+       from public.lecteurs where matricule = 'LEC103'`
+  );
+  // Le trigger ne bloque pas une mise à jour légitime (date ≥ PSA).
+  await attendOk(
+    'mise à jour d\'une présence autorisée (date ≥ premier samedi actif)',
+    'admin',
+    `update public.presences set statut = 'present'
+      where lecteur_id = (select id from public.lecteurs where matricule = 'LEC103')
+        and date_samedi = public.dernier_samedi()`
+  );
 }
 
 // ---------------------------------------------------------------------------
