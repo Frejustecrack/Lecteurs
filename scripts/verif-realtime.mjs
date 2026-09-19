@@ -168,8 +168,11 @@ const remettre = () => { for (const p of pages.values()) { p.compteur = 0; p.max
 /** Attend la fin du regroupement (400 ms) + marge réseau. */
 const attendreSync = () => dormir(900);
 
-// Données : 2 événements, 200 lecteurs.
-await db.exec(`insert into public.lecteurs (nom, prenom, matricule) select 'NOM'||g, 'P'||g, '' from generate_series(1,200) g;`);
+// Données : 2 événements, 200 lecteurs déjà inscrits depuis un an.
+// Le scénario pointe le dernier samedi : une inscription « aujourd'hui »
+// serait postérieure à ce samedi du dimanche au vendredi (règle du premier
+// samedi actif). Garder la fixture éligible quel que soit le jour de la CI.
+await db.exec(`insert into public.lecteurs (nom, prenom, matricule, created_at) select 'NOM'||g, 'P'||g, '', now() - interval '1 year' from generate_series(1,200) g;`);
 const evA = (await db.query(`insert into public.evenements (nom, date_evenement, montant_participation) values ('A', current_date, 1000) returning id`)).rows[0].id;
 const evB = (await db.query(`insert into public.evenements (nom, date_evenement, montant_participation) values ('B', current_date, 500) returning id`)).rows[0].id;
 const lecteurs = (await db.query(`select id from public.lecteurs order by matricule`)).rows.map((r) => r.id);

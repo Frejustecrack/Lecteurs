@@ -21,6 +21,7 @@ const Evenements = lazy(() => import('./pages/Evenements'));
 const EvenementDetail = lazy(() => import('./pages/EvenementDetail'));
 const Caisse = lazy(() => import('./pages/Caisse'));
 const Permissions = lazy(() => import('./pages/Permissions'));
+const Anniversaires = lazy(() => import('./pages/Anniversaires'));
 const Admin = lazy(() => import('./pages/Admin'));
 
 function RequireAuth() {
@@ -104,6 +105,7 @@ export default function App() {
                 <Route element={<RequireAuth />}>
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/lecteurs" element={<Lecteurs />} />
+                  <Route path="/anniversaires" element={<Anniversaires />} />
                   <Route path="/lecteurs/:id" element={<LecteurProfil />} />
                   <Route path="/fraternites" element={<Fraternites />} />
                   <Route path="/presences" element={<Presences />} />

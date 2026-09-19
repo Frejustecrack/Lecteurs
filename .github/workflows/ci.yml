@@ -38,6 +38,9 @@ jobs:
       - name: Synchronisation temps réel (vrai client, 5 postes, rafales)
         run: npm run verif:realtime
 
+      - name: Anniversaires (dates, template officiel, PDF et noms longs)
+        run: npm run verif:anniversaires
+
       - name: Build de production
         run: npm run build
 

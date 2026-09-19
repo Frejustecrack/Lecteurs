@@ -1,3 +1,4 @@
+import { comparerLecteurs, trierLecteurs } from '../lib/lecteurs';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -95,12 +96,12 @@ export default function Permissions() {
         .from('lecteurs')
         .select('id, matricule, nom, prenom, grade_id, fraternite_id, archived')
         .eq('archived', false)
-        .order('matricule'),
+        .order('nom').order('prenom').order('matricule'),
       supabase.from('fraternites').select('id, nom').order('nom'),
       supabase.from('grades').select('id, nom').order('id'),
     ]);
     setPermissions((rP.data ?? []) as Permission[]);
-    setLecteurs((rL.data ?? []) as Lecteur[]);
+    setLecteurs(trierLecteurs((rL.data ?? []) as Lecteur[]));
     setFraternites((rF.data ?? []) as Fraternite[]);
     setGrades((rG.data ?? []) as Grade[]);
     setLoading(false);
@@ -150,8 +151,9 @@ export default function Permissions() {
           );
         }
         return true;
-      });
-  }, [permissions, lecteurMap, filtreStatut, fId, gradeId, search]);
+      })
+      .sort((a, b) => comparerLecteurs(lecteurMap.get(a.lecteur_id)!, lecteurMap.get(b.lecteur_id)!));
+  }, [permissions, lecteurMap, filtreStatut, fId, gradeId, debouncedSearch]);
 
   if (loading) return <Spinner label="Chargement des permissions…" />;
 

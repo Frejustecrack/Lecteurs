@@ -18,6 +18,7 @@ import {
 const NAV: { to: string; label: string; icon: string; roles?: Role[] }[] = [
   { to: '/', label: 'Accueil', icon: '🏠' },
   { to: '/lecteurs', label: 'Lecteurs', icon: '👥' },
+  { to: '/anniversaires', label: 'Anniversaires', icon: '🎂' },
   { to: '/fraternites', label: 'Fraternités', icon: '🤝' },
   { to: '/presences', label: 'Présences', icon: '📅' },
   { to: '/suivis', label: 'Suivis', icon: '📊' },

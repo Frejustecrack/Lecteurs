@@ -12,9 +12,10 @@
     "preview": "vite preview",
     "verif": "node scripts/verif.ts",
     "verif:db": "node scripts/verif-db.mjs",
-    "verif:all": "npm run verif && npm run verif:db && npm run verif:pdf && npm run verif:realtime",
+    "verif:all": "npm run verif && npm run verif:db && npm run verif:pdf && npm run verif:realtime && npm run verif:anniversaires",
     "verif:pdf": "node scripts/verif-pdf.mjs",
-    "verif:realtime": "node scripts/verif-realtime.mjs"
+    "verif:realtime": "node scripts/verif-realtime.mjs",
+    "verif:anniversaires": "node scripts/verif-anniversaires.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.50.0",

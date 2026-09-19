@@ -401,7 +401,7 @@ export function Segmented<T extends string>({
             role="tab"
             aria-selected={actif}
             onClick={() => onChange(o.value)}
-            className={`${pressCls} ${pad} flex-1 whitespace-nowrap rounded-lg font-semibold sm:flex-none transition-all ${
+            className={`${pressCls} ${pad} min-w-0 flex-1 whitespace-normal break-words rounded-lg font-semibold sm:flex-none sm:whitespace-nowrap transition-all ${
               actif ? 'bg-cdlj text-white shadow-sm shadow-cdlj/20' : 'text-slate-600 hover:text-slate-800 hover:bg-white/60'
             }`}
           >

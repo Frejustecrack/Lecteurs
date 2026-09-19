@@ -1,3 +1,4 @@
+import { comparerLecteurs, trierLecteurs } from '../lib/lecteurs';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -28,9 +29,7 @@ import {
   appliquerFiltreRecap,
   calculerRecaps,
   filtrerRecaps,
-  trierRecaps,
   type FiltreRecap,
-  type TriRecap,
 } from '../lib/recap';
 import {
   Badge,
@@ -92,8 +91,6 @@ export default function Suivis() {
   const [fId, setFId] = useState('');
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 300);
-  const [tri, setTri] = useState<TriRecap>('nom');
-  const [triAsc, setTriAsc] = useState(true);
 
   const [lecteurs, setLecteurs] = useState<Lecteur[]>([]);
   const [fraternites, setFraternites] = useState<Fraternite[]>([]);
@@ -137,12 +134,12 @@ export default function Suivis() {
           // d'avant l'inscription compteraient comme des absences.
           .select('id, matricule, nom, prenom, fraternite_id, archived, created_at')
           .eq('archived', false)
-          .order('matricule')
+          .order('nom').order('prenom').order('matricule')
           .range(de, a)
       ),
       supabase.from('fraternites').select('id, nom').order('nom'),
     ]);
-    setLecteurs((rL.data ?? []) as Lecteur[]);
+    setLecteurs(trierLecteurs((rL.data ?? []) as Lecteur[]));
     setFraternites((rF.data ?? []) as Fraternite[]);
 
     if (samedisPeriode.length === 0) {
@@ -186,10 +183,10 @@ export default function Suivis() {
 
   const filtres = useMemo(
     () => filtrerRecaps(recaps, { fraterniteId: fId, recherche: debouncedSearch, filtre }),
-    [recaps, fId, search, filtre]
+    [recaps, fId, debouncedSearch, filtre]
   );
 
-  const tries = useMemo(() => trierRecaps(filtres, tri, triAsc), [filtres, tri, triAsc]);
+  const tries = useMemo(() => [...filtres].sort((a, b) => comparerLecteurs(a.lecteur, b.lecteur)), [filtres]);
 
   // ---------------------------------------------------------------- indicateurs
   const nbSeances = samedisComptes.length;
@@ -235,15 +232,6 @@ export default function Suivis() {
     setSamediChoisi('');
   }
 
-  function basculeTri(colonne: TriRecap) {
-    if (tri === colonne) setTriAsc(!triAsc);
-    else {
-      setTri(colonne);
-      setTriAsc(true);
-    }
-  }
-
-  const flecheTri = (c: TriRecap) => (tri === c ? (triAsc ? ' ↑' : ' ↓') : '');
   const fraterniteNom = (id: string | null) =>
     fraternites.find((f) => f.id === id)?.nom ?? null;
 
@@ -516,26 +504,18 @@ export default function Suivis() {
               <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="px-3 py-2.5">
-                    <button onClick={() => basculeTri('matricule')} className={`hover:text-cdlj ${pressCls}`}>
-                      Matricule{flecheTri('matricule')}
-                    </button>
+                    Matricule
                   </th>
                   <th className="px-3 py-2.5">
-                    <button onClick={() => basculeTri('nom')} className={`hover:text-cdlj ${pressCls}`}>
-                      Nom{flecheTri('nom')}
-                    </button>
+                    Nom
                   </th>
                   <th className="px-3 py-2.5">Prénom</th>
                   <th className="px-3 py-2.5">Fraternité</th>
                   <th className="px-3 py-2.5 text-center">
-                    <button onClick={() => basculeTri('presences')} className={`hover:text-cdlj ${pressCls}`}>
-                      Présences{flecheTri('presences')}
-                    </button>
+                    Présences
                   </th>
                   <th className="px-3 py-2.5 text-center">
-                    <button onClick={() => basculeTri('absences')} className={`hover:text-cdlj ${pressCls}`}>
-                      Absences{flecheTri('absences')}
-                    </button>
+                    Absences
                   </th>
                   <th className="px-3 py-2.5 text-center">Non pointé</th>
                   <th className="px-3 py-2.5 text-right">Taux</th>

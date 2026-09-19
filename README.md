@@ -187,7 +187,7 @@ Recommandé : **Authentication → Settings** → désactiver *Enable email sign
 | **Présences** | `/presences` | **Vue mensuelle** (3-5 samedis, `overflow-x`) ou **hebdomadaire** (1 samedi, **cartes sur mobile sans scroll**, tableau compact sur desktop). Légende en **chips** aux couleurs des cellules (vert / rouge / gris pointillé). Gel automatique des samedis passés (RLS `dernier_samedi()`), correction Admin tracée. |
 | **Suivis** | `/suivis` | Récap `present/absent/nonSaisi/taux` via `src/lib/recap.ts`. Filtres *absents / assidus / saisie incomplète*, filtre samedi précis, fraternité, recherche, tri colonnes. Cartes sur mobile, tableau sur desktop. **Export PDF du récapitulatif tel qu'affiché** (mêmes samedis comptés, mêmes filtres, même tri), tracé via `log_action('export.pdf')`. |
 | **Cotisations** | `/cotisations` | 50 F / samedi / lecteur (paramétrable dans `app_settings`). Vue mensuelle/hebdo (même UX que Présences). Saisie **Caissier uniquement**, pas de gel, mois passés modifiables. |
-| **Événements** | `/evenements`, `/evenements/:id` | Création par CO, inscription par matricule, paiements en tranches (trigger `check_tranche` : total ≤ participation), **suppression par CO/Admin** (cascade participants/paiements/caisse + log `evenement.suppression`), **clôture CO** `en_cours→termine` (policy `evenements_update` WITH CHECK) + réouverture Admin. |
+| **Événements** | `/evenements`, `/evenements/:id` | Création par CO, inscription avec recherche par nom/prénom/matricule, paiements en tranches (trigger `check_tranche` : total ≤ participation), **suppression par CO/Admin** (cascade participants/paiements/caisse + log `evenement.suppression`), **clôture CO** `en_cours→termine` (policy `evenements_update` WITH CHECK) + réouverture Admin. |
 | **Caisse** | `/caisse` | Caisse générale = cotisations payées + encaissements − décaissements (`event_id IS NULL`). Opérations CO uniquement. Export PDF. |
 | **Administration** | `/admin` | Logs (400 derniers), comptes & rôles, montant cotisation — **Admin uniquement** (RLS `is_admin()`). |
 
@@ -395,3 +395,87 @@ Le rendu visuel des pages React (classes CSS, responsive) n'est pas testé autom
 ---
 
 *Projet livré par la CDLJ Akogbato — “Lecteurs, sel et lumière nous sommes”.*
+
+
+## Listes alphabétiques, inscription et présences futures (19/09/2026)
+
+- Les listes de lecteurs sont automatiquement triées par **nom de famille**, puis
+  prénom, puis matricule pour les homonymes, selon la collation française (sans
+  distinction de casse/accents). Le helper commun est `src/lib/lecteurs.ts`.
+- Le même ordre est imposé dans les PDF : liste des lecteurs, présences,
+  cotisations, suivis et bilan d'événement. Les filtres restent appliqués.
+- L'inscription à un événement propose une recherche par nom, prénom ou matricule,
+  avec sélection explicite du lecteur. Les archivés et les participants déjà
+  inscrits ne sont pas proposés. Les droits existants ne sont pas élargis.
+- Une présence d'un **samedi futur** est non modifiable par tous les comptes
+  applicatifs, **Admin compris** : création, modification, déplacement de date,
+  upsert et suppression sont bloqués par RLS. La date de référence est celle du
+  Bénin (`aujourdhui_benin()`). Le gel des anciens samedis reste inchangé.
+- Les **cotisations futures restent autorisées** selon leurs droits habituels.
+
+### Déploiement sans perte de données
+
+Appliquer la nouvelle migration
+`supabase/migrations/20260919200000_interdire_presences_futures.sql` par le processus
+habituel de déploiement Supabase, en complément du frontend. Elle ajoute des
+policies restrictives et ne modifie/supprime aucune donnée. Les éventuelles
+présences futures déjà en base restent lisibles, mais sont verrouillées jusqu'au
+samedi concerné. Ne pas réinitialiser la base ni rejouer les scripts de nettoyage.
+
+Vérifications : `npm run verif:all` et `npm run build`. Les tests couvrent notamment
+les homonymes/accents, le tri réel des cinq PDF et le blocage des présences futures
+pour tous les rôles, y compris les lignes historiques et les upserts.
+
+## Anniversaires — mois courant uniquement
+
+L'onglet **Anniversaires** (`/anniversaires`) affiche les lecteurs **actifs** dont
+l'anniversaire tombe dans le mois courant au Bénin. Il n'y a ni calendrier annuel
+ni navigation entre mois. Le mois se met à jour automatiquement (contrôle toutes
+les 30 secondes et au retour sur l'onglet). Le tri reste alphabétique par nom.
+
+### Données et droits
+
+- `v_anniversaires_mois` filtre dans PostgreSQL, avec un index du mois de naissance.
+  Le navigateur reçoit seulement `id`, `matricule`, `nom`, `prenom`, `jour`, `mois`,
+  `annee` et `age_atteint` — **pas la date de naissance complète, ni les contacts**.
+- L'âge est `année courante − année de naissance` : âge atteint cette année,
+  même avant l'anniversaire. Le 29 février reste affiché en février en année commune.
+- Les dates absentes, non finies, futures et les lecteurs archivés sont exclus.
+- La vue utilise `security_invoker` : RLS existantes conservées, compte sans rôle
+  exclu. L'anonyme n'a accès ni à la vue ni à la fonction d'export.
+- `carte_anniversaire(uuid)` relit un seul lecteur du mois au clic et contrôle
+  les droits côté serveur. Admin, CO, CO paroissial et Caissier peuvent exporter ;
+  Responsable peut seulement consulter, conformément aux autres exports.
+- **Aucun champ sexe/genre ni photo n'existe dans le schéma versionné actuel.**
+  La page utilise des initiales et la carte un texte neutre. Aucun sexe n'est déduit
+  du prénom, aucune nouvelle donnée personnelle n'est ajoutée. Le helper de messages
+  prévoit des formulations fille/garçon si un champ réel est ajouté ultérieurement.
+
+### Carte PDF officielle
+
+Source : `Gemini_Generated_Image_xi7rhdxi7rhdxi7r.jpeg`, commit utilisateur `5604296`.
+Le fond crème et or, l'emblème, les ballons, le cadre et les titres sont conservés.
+L'âge, le nom, les vœux et l'année sont remplacés par des textes vectoriels mesurés.
+Voir `src/assets/anniversaires/README.md` pour la provenance, les polices, la
+préparation reproductible et les dimensions (240 × 135,529 mm, environ 288 ppp).
+Les noms longs sont centrés sur plusieurs lignes, avec taille ajustée et sans
+troncature. Une donnée exceptionnellement démesurée est refusée plutôt que de
+produire une carte illisible. Le fond et jsPDF sont chargés au téléchargement,
+pas à l'ouverture de la liste. Le fond est réutilisé pour les exports suivants.
+
+### Déploiement et tests
+
+Appliquer **uniquement la nouvelle migration**
+`supabase/migrations/20260919230000_anniversaires.sql` par le circuit habituel
+Supabase, puis déployer le frontend. Elle ajoute une vue, un index et une fonction ;
+**aucune donnée ni table existante n'est supprimée ou réinitialisée**.
+Sans cette migration, la page affiche une erreur avec nouvelle tentative, et non
+un faux état « aucun anniversaire ».
+
+- `npm run verif:anniversaires` : dates, minuit au Bénin, année bissextile,
+  messages, noms de fichiers, provenance du template, six vrais PDF et limites
+  des zones. Les PDF de contrôle sont écrits dans `tmp/anniversaires/` (hors Git).
+- `npm run verif:db` : filtres SQL, mois suivant, état vide, droits rôle par rôle,
+  dates invalides et 29 février. Environnement PostgreSQL local PGlite uniquement.
+- `npm run verif:all` et la CI incluent ces vérifications. `npm run build` effectue
+  aussi le typage TypeScript ; le dépôt n'a pas de script lint distinct.

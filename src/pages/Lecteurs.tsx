@@ -1,3 +1,4 @@
+import { trierLecteurs } from '../lib/lecteurs';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -88,13 +89,13 @@ export default function Lecteurs() {
         supabase
           .from('lecteurs')
           .select('id, matricule, nom, prenom, grade_id, fraternite_id, annee_adhesion, archived, archived_at, contact_parent')
-          .order('matricule')
+          .order('nom').order('prenom').order('matricule')
           .range(de, a)
       ),
       supabase.from('fraternites').select('id, nom').order('nom'),
       supabase.from('grades').select('id, nom').order('id'),
     ]);
-    setLecteurs((rL.data ?? []) as Lecteur[]);
+    setLecteurs(trierLecteurs((rL.data ?? []) as Lecteur[]));
     setFraternites((rF.data ?? []) as Fraternite[]);
     setGrades((rG.data ?? []) as Grade[]);
     setLoading(false);
@@ -123,7 +124,7 @@ export default function Lecteurs() {
         l.prenom.toLowerCase().includes(q)
       );
     });
-  }, [lecteurs, tab, fId, gradeId, search]);
+  }, [lecteurs, tab, fId, gradeId, debouncedSearch]);
 
   const filtresActifs = fId !== '' || gradeId !== '' || search.trim() !== '';
 

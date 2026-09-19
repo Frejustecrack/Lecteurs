@@ -1,3 +1,4 @@
+import { trierLecteurs } from '../lib/lecteurs';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -100,7 +101,7 @@ export default function Presences() {
           .from('lecteurs')
           .select('id, matricule, nom, prenom, fraternite_id, archived, created_at')
           .eq('archived', false)
-          .order('matricule')
+          .order('nom').order('prenom').order('matricule')
           .range(de, a)
       ),
       supabase.from('fraternites').select('id, nom').order('nom'),
@@ -115,7 +116,7 @@ export default function Presences() {
           .range(de, a)
       ),
     ]);
-    setLecteurs((rL.data ?? []) as Lecteur[]);
+    setLecteurs(trierLecteurs((rL.data ?? []) as Lecteur[]));
     setFraternites((rF.data ?? []) as Fraternite[]);
     setPresences((rP.data ?? []) as Presence[]);
     setLoading(false);
@@ -146,7 +147,7 @@ export default function Presences() {
         l.prenom.toLowerCase().includes(q)
       );
     });
-  }, [lecteurs, fId, search]);
+  }, [lecteurs, fId, debouncedSearch]);
 
   /** Samedis déjà arrivés : seuls ceux-là sont comptabilisés. */
   const samedisArrivesListe = useMemo(
@@ -155,6 +156,10 @@ export default function Presences() {
   );
 
   async function toggle(l: Lecteur, sam: string) {
+    if (!samediEstArrive(sam)) {
+      toast('Samedi à venir : aucune saisie de présence n’est autorisée, même pour l’Administrateur.', 'err');
+      return;
+    }
     if (estAvantPremierSamediActif(sam, l.created_at)) {
       toast(
         `Ce samedi est antérieur au premier samedi actif de ${l.prenom} (${fmtDate(premierSamediActif(l.created_at))}).`,
@@ -202,16 +207,17 @@ export default function Presences() {
 
   // Actions de masse pour 200 lecteurs : évite 200 clics le samedi matin
   async function marquerTous(statut: 'present' | 'absent') {
-    if (samedisArrivesListe.length === 0) {
-      toast('Aucun samedi arrivé à marquer.', 'err');
+    const samedisModifiables = samedis.filter((sam) => samediEstArrive(sam) && (isAdmin || sam >= dernierSam));
+    if (samedisModifiables.length === 0) {
+      toast('Aucun samedi arrivé et modifiable à marquer.', 'err');
       return;
     }
-    if (!confirm(`Marquer ${filtered.length} lecteur(s) comme ${statut === 'present' ? 'présents' : 'absents'} sur ${samedisArrivesListe.length} samedi(s) ?`)) return;
+    if (!confirm(`Marquer ${filtered.length} lecteur(s) comme ${statut === 'present' ? 'présents' : 'absents'} sur ${samedisModifiables.length} samedi(s) ?`)) return;
     setBusyBulk(true);
     try {
       const payload = filtered.flatMap((l) =>
-        samedisArrivesListe
-          .filter((sam) => !estAvantPremierSamediActif(sam, l.created_at))
+        samedisModifiables
+          .filter((sam) => samediEstArrive(sam) && (isAdmin || sam >= dernierSam) && !estAvantPremierSamediActif(sam, l.created_at))
           .map((sam) => ({
             lecteur_id: l.id,
             date_samedi: sam,
@@ -363,7 +369,7 @@ export default function Presences() {
           aria-label="Rechercher un lecteur"
           className={`${inputCls} min-w-0 flex-1 sm:max-w-xs`}
         />
-        {filtered.length > 0 && samedisArrivesListe.length > 0 && (
+        {filtered.length > 0 && samedis.some((sam) => samediEstArrive(sam) && (isAdmin || sam >= dernierSam)) && (
           <div className="flex w-full gap-2 sm:w-auto">
             <button
               onClick={() => marquerTous('present')}
@@ -395,7 +401,7 @@ export default function Presences() {
               const p = sam && !neant ? map.get(`${l.id}|${sam}`) : undefined;
               const arrive = sam ? samediEstArrive(sam) : false;
               const gelee = sam ? estGelee(new Date(sam + 'T12:00:00')) : false;
-              const clickable = !neant && (!gelee || isAdmin);
+              const clickable = arrive && !neant && (!gelee || isAdmin);
               const vert = !neant && p?.statut === 'present';
               const rouge = !neant && (p?.statut === 'absent' || (!p && arrive));
               
@@ -425,10 +431,10 @@ export default function Presences() {
                     title={
                       neant
                         ? `Néant — Inscription ultérieure (1er samedi actif : ${fmtDate(premierSamediActif(l.created_at))})`
-                        : !clickable
-                          ? 'Samedi gelé — correction Admin uniquement'
-                          : !arrive
-                            ? 'Samedi à venir — pas encore comptabilisé'
+                        : !arrive
+                          ? 'Samedi à venir — saisie interdite pour tous'
+                          : !clickable
+                            ? 'Samedi gelé — correction Admin uniquement'
                             : vert
                               ? 'Présent — cliquez pour basculer en absent'
                               : 'Absent — cliquez pour basculer en présent'
@@ -509,7 +515,7 @@ export default function Presences() {
                       const p = !neant ? map.get(`${l.id}|${s}`) : undefined;
                       const arrive = samediEstArrive(s);
                       const gelee = estGelee(new Date(s + 'T12:00:00'));
-                      const clickable = !neant && (!gelee || isAdmin);
+                      const clickable = arrive && !neant && (!gelee || isAdmin);
                       const vert = !neant && p?.statut === 'present';
                       const rouge = !neant && (p?.statut === 'absent' || (!p && arrive));
                       return (
@@ -521,10 +527,10 @@ export default function Presences() {
                             title={
                               neant
                                 ? `Néant — Inscription ultérieure (1er samedi actif : ${fmtDate(premierSamediActif(l.created_at))})`
-                                : !clickable
-                                  ? 'Samedi gelé — correction Admin uniquement'
-                                  : !arrive
-                                    ? 'Samedi à venir — pas encore comptabilisé'
+                                : !arrive
+                                  ? 'Samedi à venir — saisie interdite pour tous'
+                                  : !clickable
+                                    ? 'Samedi gelé — correction Admin uniquement'
                                     : vert
                                       ? 'Présent — cliquez pour basculer en absent'
                                       : 'Absent — cliquez pour basculer en présent'
@@ -607,7 +613,7 @@ export default function Presences() {
                       const p = !neant ? map.get(`${l.id}|${s}`) : undefined;
                       const arrive = samediEstArrive(s);
                       const gelee = estGelee(new Date(s + 'T12:00:00'));
-                      const clickable = !neant && (!gelee || isAdmin);
+                      const clickable = arrive && !neant && (!gelee || isAdmin);
                       const vert = !neant && p?.statut === 'present';
                       const rouge = !neant && (p?.statut === 'absent' || (!p && arrive));
                       return (
@@ -619,10 +625,10 @@ export default function Presences() {
                             title={
                               neant
                                 ? `Néant — Inscription ultérieure (1er samedi actif : ${fmtDate(premierSamediActif(l.created_at))})`
-                                : !clickable
-                                  ? 'Samedi gelé — correction Admin uniquement'
-                                  : !arrive
-                                    ? 'Samedi à venir — pas encore comptabilisé'
+                                : !arrive
+                                  ? 'Samedi à venir — saisie interdite pour tous'
+                                  : !clickable
+                                    ? 'Samedi gelé — correction Admin uniquement'
                                     : vert
                                       ? 'Présent — cliquez pour basculer en absent'
                                       : 'Absent — cliquez pour basculer en présent'
@@ -675,7 +681,7 @@ export default function Presences() {
           Les samedis antérieurs à l'inscription d'un lecteur affichent <strong className="text-slate-500">Néant</strong> et ne génèrent aucune absence.
           Par défaut un samedi arrivé est <strong className="text-alerte">rouge</strong> :
           tant que la présence n'a pas été basculée au vert, le lecteur est
-          considéré comme absent. Un samedi passé est gelé — correction
+          considéré comme absent. Un samedi à venir ne peut être pointé par personne. Un samedi passé est gelé — correction
           exceptionnelle de l'Administrateur uniquement, tracée dans les logs. Le
           récapitulatif par lecteur et les listes de présents/absents se
           consultent dans l'onglet{' '}

@@ -248,6 +248,35 @@ console.log('\n6. Noms de fichiers : préfixe « lecteur_akogbato », descriptif
   for (const n of [...noms, ...produits.filter((p) => p.suffixe).map((p) => p.nom)]) console.log(`      • ${n}`);
 }
 
+console.log('\n7. Ordre alphabétique imposé par les cinq exports de listes');
+{
+  suffixeNom = '_tri';
+  // Matricules volontairement en ordre inverse des noms : tester le nom réel.
+  const jeu = [
+    { ...lecteurs[0], id: 'z', matricule: 'LEC100', nom: 'Zinsou', prenom: 'Alice' },
+    { ...lecteurs[0], id: 'e', matricule: 'LEC101', nom: 'Éhouman', prenom: 'Zoé' },
+    { ...lecteurs[0], id: 'd', matricule: 'LEC200', nom: 'Dossou', prenom: 'Marc' },
+    { ...lecteurs[0], id: 'a', matricule: 'LEC300', nom: 'Dossou', prenom: 'Alice' },
+  ];
+  const avant = JSON.stringify(jeu);
+  const verifierTri = (nom, action, colonne = 0) => {
+    action();
+    const lignes = produits.at(-1).doc.lastAutoTable.body;
+    const ordre = lignes.map(r => r.cells[colonne].text.join(' ')).join(',');
+    if (ordre === 'LEC300,LEC200,LEC101,LEC100') ok(`${nom} : noms puis prénoms, indépendamment des matricules`);
+    else ko(`${nom} : tri PDF`, ordre);
+  };
+  verifierTri('Présences', () => mod.exportPresences({ ...commun, lecteurs: jeu, presences: [] }));
+  verifierTri('Cotisations', () => mod.exportCotisations({ ...commun, lecteurs: jeu, cotisations: [], montantCot: 50 }));
+  verifierTri('Liste des lecteurs', () => mod.exportListeLecteurs({ lecteurs: jeu, grades: [], fraternites: [], fraternite: null, grade: null, recherche: '', statut: 'actifs', auteur: 'Test' }), 1);
+  verifierTri('Bilan événement', () => mod.exportEvenementBilan({
+    evenement: { id: 'tri', nom: 'Tri', date_evenement: '2026-10-01', lieu: '', montant_participation: 50, statut: 'en_cours' },
+    participants: jeu.map(lecteur => ({ lecteur, paye: 0, tranches: [] })), totalCollecte: 0, totalAttendu: 200, auteur: 'Test',
+  }));
+  verifierTri('Suivis', () => mod.exportSuivis({ periode: 'Test', samedis: [], recaps: jeu.map(lecteur => ({ lecteur, total: 0, present: 0, absent: 0, nonSaisi: 0, taux: 0 })), fraterniteNom: () => null, auteur: 'Test' }));
+  if (JSON.stringify(jeu) === avant) ok('exports : aucun tableau source modifié'); else ko('exports : mutation des lecteurs');
+}
+
 console.log(`\nFichiers écrits dans ${sortie}`);
 console.log('\n' + '─'.repeat(66));
 if (echecs.length === 0) { console.log(`✅ ${reussites} vérifications PDF réussies, 0 échec.`); }
