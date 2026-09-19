@@ -812,7 +812,7 @@ export default function LecteurProfil() {
                 {fmtMoney(
                   samedisC
                     .filter((d) => !estAvantPremierSamediActif(d, l?.created_at) && !cotMoisC.get(d) && samediEstArrive(d))
-                    .reduce((s) => s + 50, 0)
+                    .reduce((s) => s + montantCot, 0)
                 )}
               </span>
             </div>

@@ -95,10 +95,10 @@ export default function Dashboard() {
     const compteurs = (rCompteurs.data ?? { actifs: 0 }) as { actifs: number };
     const actifs = Number(compteurs.actifs);
     const presParMois = new Map(
-      ((rPresMois.data ?? []) as { mois: string; presents: number; absents: number }[]).map((r) => [r.mois, r])
+      ((rPresMois.data ?? []) as { mois: string; presents: number; absents: number; samedis_eligibles?: number }[]).map((r) => [r.mois, r])
     );
     const cotParMois = new Map(
-      ((rCotMois.data ?? []) as { mois: string; total: number; lecteurs_payes: number }[]).map((r) => [r.mois, r])
+      ((rCotMois.data ?? []) as { mois: string; total: number; lecteurs_payes: number; lecteurs_eligibles?: number }[]).map((r) => [r.mois, r])
     );
     const encParMois = new Map(
       ((rEncMois.data ?? []) as { mois: string; total: number }[]).map((r) => [r.mois, Number(r.total)])
@@ -122,6 +122,15 @@ export default function Dashboard() {
     const samedis = samedisArrives(samedisDuMois(am, m).map(dateISO));
     const nbPresent = Number(presParMois.get(moisCourant)?.presents ?? 0);
     const lecteursPayes = Number(cotParMois.get(moisCourant)?.lecteurs_payes ?? 0);
+    // Dénominateurs « premier samedi actif » (migration 20260919180000) : un
+    // lecteur inscrit en cours de mois ne compte que pour les samedis à partir
+    // de son premier samedi actif — les samedis antérieurs ne sont ni des
+    // absences potentielles ni des cotisations attendues. Repli sur l'ancien
+    // dénominateur si la vue date d'avant la migration.
+    const samedisEligibles = Number(
+      presParMois.get(moisCourant)?.samedis_eligibles ?? actifs * Math.max(samedis.length, 1)
+    );
+    const lecteursEligibles = Number(cotParMois.get(moisCourant)?.lecteurs_eligibles ?? actifs);
     const caisseSolde = totaux
       ? Number(totaux.total_cotisations) +
         Number(totaux.total_encaissements) -
@@ -130,10 +139,10 @@ export default function Dashboard() {
 
     setKpi({
       actifs,
-      tauxPresence: pct(nbPresent, actifs * Math.max(samedis.length, 1)),
+      tauxPresence: pct(nbPresent, samedisEligibles),
       presenceMoyenne:
         samedis.length > 0 ? Math.round((nbPresent / samedis.length) * 10) / 10 : 0,
-      tauxCotisation: pct(lecteursPayes, actifs),
+      tauxCotisation: pct(lecteursPayes, lecteursEligibles),
       caisseSolde,
       evenementsEnCours: even.length,
       samedisMois: samedis.length,

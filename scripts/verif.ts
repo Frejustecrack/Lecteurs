@@ -140,6 +140,14 @@ eq('inscrit un dimanche (06/09/2026) -> premier samedi = 12/09/2026', premierSam
 eq('inscrit un vendredi (11/09/2026) -> premier samedi = 12/09/2026', premierSamediActifISO('2026-09-11T23:00:00Z'), '2026-09-12');
 verif('05/09/2026 est avant le premier samedi d un lecteur inscrit le 06/09/2026', estAvantPremierSamediActif('2026-09-05', '2026-09-06T10:00:00Z'));
 verif('12/09/2026 n est pas avant le premier samedi d un lecteur inscrit le 06/09/2026', !estAvantPremierSamediActif('2026-09-12', '2026-09-06T10:00:00Z'));
+// Cas « inscrit un samedi » : ce même samedi est le premier samedi actif —
+// la cellule est interactive ce jour-là, les samedis précédents restent néant.
+eq('inscrit un samedi (19/09/2026) -> premier samedi = 19/09/2026', premierSamediActifISO('2026-09-19T10:00:00Z'), '2026-09-19');
+verif('12/09/2026 est avant le premier samedi d un lecteur inscrit le samedi 19/09/2026', estAvantPremierSamediActif('2026-09-12', '2026-09-19T10:00:00Z'));
+verif('19/09/2026 (le jour de l inscription) n est PAS avant : cellule interactive', !estAvantPremierSamediActif('2026-09-19', '2026-09-19T10:00:00Z'));
+verif('26/09/2026 (samedi suivant) n est pas avant le premier samedi actif', !estAvantPremierSamediActif('2026-09-26', '2026-09-19T10:00:00Z'));
+// created_at absent (ligne historique sans date) : aucune date n est « avant ».
+verif('created_at manquant -> aucun samedi n est exclu', !estAvantPremierSamediActif('2026-09-05', undefined) && !estAvantPremierSamediActif('2026-09-05', null));
 
 // ============================================================================
 console.log('\n── Validation : années de naissance et d’adhésion ───────────────────');
