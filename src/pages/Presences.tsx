@@ -11,10 +11,12 @@ import {
   deplaceSemaine,
   dernierSamedi,
   dimancheDeSemaine,
+  estAvantPremierSamediActif,
   estGelee,
   fmtDate,
   lundiDeSemaine,
   moisLabel,
+  premierSamediActif,
   samediEstArrive,
   samedisDuMois,
   samedisSemaine,
@@ -92,11 +94,11 @@ export default function Presences() {
       return;
     }
     const [rL, rF, rP] = await Promise.all([
-      // Optimisé 200 max : colonnes minimales pour réduire le transfert (~60% de gain)
+      // Optimisé 200 max : colonnes minimales avec created_at pour premier samedi actif
       toutesLesLignes<Lecteur>((de, a) =>
         supabase
           .from('lecteurs')
-          .select('id, matricule, nom, prenom, fraternite_id, archived')
+          .select('id, matricule, nom, prenom, fraternite_id, archived, created_at')
           .eq('archived', false)
           .order('matricule')
           .range(de, a)
@@ -153,6 +155,13 @@ export default function Presences() {
   );
 
   async function toggle(l: Lecteur, sam: string) {
+    if (estAvantPremierSamediActif(sam, l.created_at)) {
+      toast(
+        `Ce samedi est antérieur au premier samedi actif de ${l.prenom} (${fmtDate(premierSamediActif(l.created_at))}).`,
+        'err'
+      );
+      return;
+    }
     const current = map.get(`${l.id}|${sam}`);
     const gelee = sam < dernierSam;
     if (gelee && !isAdmin) {
@@ -201,11 +210,13 @@ export default function Presences() {
     setBusyBulk(true);
     try {
       const payload = filtered.flatMap((l) =>
-        samedisArrivesListe.map((sam) => ({
-          lecteur_id: l.id,
-          date_samedi: sam,
-          statut,
-        }))
+        samedisArrivesListe
+          .filter((sam) => !estAvantPremierSamediActif(sam, l.created_at))
+          .map((sam) => ({
+            lecteur_id: l.id,
+            date_samedi: sam,
+            statut,
+          }))
       );
       // Upsert par paquets de 200 pour éviter de surcharger PostgREST (200*5=1000)
       for (let i = 0; i < payload.length; i += 200) {
@@ -213,7 +224,7 @@ export default function Presences() {
         const { error } = await supabase.from('presences').upsert(chunk, { onConflict: 'lecteur_id,date_samedi' });
         if (error) throw error;
       }
-      toast(`${filtered.length} lecteur(s) marqués ${statut} sur ${samedisArrivesListe.length} samedi(s).`);
+      toast(`${filtered.length} lecteur(s) marqués ${statut} sur leurs samedis actifs.`);
       load();
     } catch (e) {
       toast(traduireErreur(e, 'marquer les présences en masse'), 'err');
@@ -380,14 +391,18 @@ export default function Presences() {
           <ul className="space-y-2 sm:hidden">
             {filtered.map((l) => {
               const sam = samedis[0];
-              const p = sam ? map.get(`${l.id}|${sam}`) : undefined;
+              const neant = sam ? estAvantPremierSamediActif(sam, l.created_at) : false;
+              const p = sam && !neant ? map.get(`${l.id}|${sam}`) : undefined;
               const arrive = sam ? samediEstArrive(sam) : false;
               const gelee = sam ? estGelee(new Date(sam + 'T12:00:00')) : false;
-              const clickable = !gelee || isAdmin;
-              const vert = p?.statut === 'present';
-              const rouge = p?.statut === 'absent' || (!p && arrive);
-              const pres = samedis.filter((s) => map.get(`${l.id}|${s}`)?.statut === 'present').length;
-              const abs = samedisArrivesListe.filter((s) => map.get(`${l.id}|${s}`)?.statut !== 'present').length;
+              const clickable = !neant && (!gelee || isAdmin);
+              const vert = !neant && p?.statut === 'present';
+              const rouge = !neant && (p?.statut === 'absent' || (!p && arrive));
+              
+              const samedisVisiblesLecteur = samedis.filter((s) => !estAvantPremierSamediActif(s, l.created_at));
+              const samedisArrivesLecteur = samedisArrivesListe.filter((s) => !estAvantPremierSamediActif(s, l.created_at));
+              const pres = samedisVisiblesLecteur.filter((s) => map.get(`${l.id}|${s}`)?.statut === 'present').length;
+              const abs = samedisArrivesLecteur.filter((s) => map.get(`${l.id}|${s}`)?.statut !== 'present').length;
               return (
                 <li
                   key={l.id}
@@ -408,23 +423,27 @@ export default function Presences() {
                     disabled={!clickable || !sam}
                     aria-busy={celluleActive === `${l.id}|${sam}` || undefined}
                     title={
-                      !clickable
-                        ? 'Samedi gelé — correction Admin uniquement'
-                        : !arrive
-                          ? 'Samedi à venir — pas encore comptabilisé'
-                          : vert
-                            ? 'Présent — cliquez pour basculer en absent'
-                            : 'Absent — cliquez pour basculer en présent'
+                      neant
+                        ? `Néant — Inscription ultérieure (1er samedi actif : ${fmtDate(premierSamediActif(l.created_at))})`
+                        : !clickable
+                          ? 'Samedi gelé — correction Admin uniquement'
+                          : !arrive
+                            ? 'Samedi à venir — pas encore comptabilisé'
+                            : vert
+                              ? 'Présent — cliquez pour basculer en absent'
+                              : 'Absent — cliquez pour basculer en présent'
                     }
                     className={`h-12 w-20 shrink-0 rounded-xl text-base font-bold transition-all duration-150 active:scale-90 ${
-                      vert
-                        ? 'bg-emerald-500 text-white'
-                        : rouge
-                          ? 'bg-alerte text-white'
-                          : 'border border-dashed border-slate-300 text-slate-300'
+                      neant
+                        ? 'border border-slate-200 bg-slate-100 text-slate-400 font-normal italic text-xs'
+                        : vert
+                          ? 'bg-emerald-500 text-white'
+                          : rouge
+                            ? 'bg-alerte text-white'
+                            : 'border border-dashed border-slate-300 text-slate-300'
                     } ${clickable ? 'cursor-pointer hover:opacity-80' : 'cursor-not-allowed opacity-70'}`}
                   >
-                    {vert ? '✓' : rouge ? '✗' : '—'}
+                    {neant ? 'Néant' : vert ? '✓' : rouge ? '✗' : '—'}
                   </button>
                 </li>
               );
@@ -464,11 +483,12 @@ export default function Presences() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.map((l) => {
-                // À preuve du contraire : un samedi arrivé non pointé = absent.
-                const pres = samedis.filter(
+                const samedisVisiblesLecteur = samedis.filter((s) => !estAvantPremierSamediActif(s, l.created_at));
+                const samedisArrivesLecteur = samedisArrivesListe.filter((s) => !estAvantPremierSamediActif(s, l.created_at));
+                const pres = samedisVisiblesLecteur.filter(
                   (s) => map.get(`${l.id}|${s}`)?.statut === 'present'
                 ).length;
-                const abs = samedisArrivesListe.filter(
+                const abs = samedisArrivesLecteur.filter(
                   (s) => map.get(`${l.id}|${s}`)?.statut !== 'present'
                 ).length;
                 return (
@@ -485,13 +505,13 @@ export default function Presences() {
                       </Link>
                     </td>
                     {samedis.map((s) => {
-                      const p = map.get(`${l.id}|${s}`);
+                      const neant = estAvantPremierSamediActif(s, l.created_at);
+                      const p = !neant ? map.get(`${l.id}|${s}`) : undefined;
                       const arrive = samediEstArrive(s);
                       const gelee = estGelee(new Date(s + 'T12:00:00'));
-                      const clickable = !gelee || isAdmin;
-                      // Rouge par défaut dès que le samedi est arrivé.
-                      const vert = p?.statut === 'present';
-                      const rouge = p?.statut === 'absent' || (!p && arrive);
+                      const clickable = !neant && (!gelee || isAdmin);
+                      const vert = !neant && p?.statut === 'present';
+                      const rouge = !neant && (p?.statut === 'absent' || (!p && arrive));
                       return (
                         <td key={s} className="px-2 py-2 text-center">
                           <button
@@ -499,27 +519,31 @@ export default function Presences() {
                             disabled={!clickable}
                             aria-busy={celluleActive === `${l.id}|${s}` || undefined}
                             title={
-                              !clickable
-                                ? 'Samedi gelé — correction Admin uniquement'
-                                : !arrive
-                                  ? 'Samedi à venir — pas encore comptabilisé'
-                                  : vert
-                                    ? 'Présent — cliquez pour basculer en absent'
-                                    : 'Absent — cliquez pour basculer en présent'
+                              neant
+                                ? `Néant — Inscription ultérieure (1er samedi actif : ${fmtDate(premierSamediActif(l.created_at))})`
+                                : !clickable
+                                  ? 'Samedi gelé — correction Admin uniquement'
+                                  : !arrive
+                                    ? 'Samedi à venir — pas encore comptabilisé'
+                                    : vert
+                                      ? 'Présent — cliquez pour basculer en absent'
+                                      : 'Absent — cliquez pour basculer en présent'
                             }
-                            className={`h-8 w-10 rounded-md text-sm font-bold transition-all duration-150 active:scale-90 ${
-                              vert
-                                ? 'bg-emerald-500 text-white'
-                                : rouge
-                                  ? 'bg-alerte text-white'
-                                  : 'border border-dashed border-slate-300 text-slate-300'
+                            className={`h-8 min-w-[44px] rounded-md px-1 text-xs font-bold transition-all duration-150 active:scale-90 ${
+                              neant
+                                ? 'border border-slate-200 bg-slate-100 text-slate-400 font-normal italic text-[11px]'
+                                : vert
+                                  ? 'bg-emerald-500 text-white'
+                                  : rouge
+                                    ? 'bg-alerte text-white'
+                                    : 'border border-dashed border-slate-300 text-slate-300'
                             } ${
                               clickable
                                 ? 'cursor-pointer hover:opacity-80'
                                 : 'cursor-not-allowed opacity-70'
                             }`}
                           >
-                            {vert ? '✓' : rouge ? '✗' : '—'}
+                            {neant ? 'Néant' : vert ? '✓' : rouge ? '✗' : '—'}
                           </button>
                         </td>
                       );
@@ -566,8 +590,10 @@ export default function Presences() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.map((l) => {
-                const pres = samedis.filter((s) => map.get(`${l.id}|${s}`)?.statut === 'present').length;
-                const abs = samedisArrivesListe.filter((s) => map.get(`${l.id}|${s}`)?.statut !== 'present').length;
+                const samedisVisiblesLecteur = samedis.filter((s) => !estAvantPremierSamediActif(s, l.created_at));
+                const samedisArrivesLecteur = samedisArrivesListe.filter((s) => !estAvantPremierSamediActif(s, l.created_at));
+                const pres = samedisVisiblesLecteur.filter((s) => map.get(`${l.id}|${s}`)?.statut === 'present').length;
+                const abs = samedisArrivesLecteur.filter((s) => map.get(`${l.id}|${s}`)?.statut !== 'present').length;
                 return (
                   <tr key={l.id} className="hover:bg-slate-50/60">
                     <td className="px-3 py-2 font-mono text-xs font-semibold text-cdlj">{l.matricule}</td>
@@ -577,12 +603,13 @@ export default function Presences() {
                       </Link>
                     </td>
                     {samedis.map((s) => {
-                      const p = map.get(`${l.id}|${s}`);
+                      const neant = estAvantPremierSamediActif(s, l.created_at);
+                      const p = !neant ? map.get(`${l.id}|${s}`) : undefined;
                       const arrive = samediEstArrive(s);
                       const gelee = estGelee(new Date(s + 'T12:00:00'));
-                      const clickable = !gelee || isAdmin;
-                      const vert = p?.statut === 'present';
-                      const rouge = p?.statut === 'absent' || (!p && arrive);
+                      const clickable = !neant && (!gelee || isAdmin);
+                      const vert = !neant && p?.statut === 'present';
+                      const rouge = !neant && (p?.statut === 'absent' || (!p && arrive));
                       return (
                         <td key={s} className="px-2 py-2 text-center">
                           <button
@@ -590,19 +617,23 @@ export default function Presences() {
                             disabled={!clickable}
                             aria-busy={celluleActive === `${l.id}|${s}` || undefined}
                             title={
-                              !clickable
-                                ? 'Samedi gelé — correction Admin uniquement'
-                                : !arrive
-                                  ? 'Samedi à venir — pas encore comptabilisé'
-                                  : vert
-                                    ? 'Présent — cliquez pour basculer en absent'
-                                    : 'Absent — cliquez pour basculer en présent'
+                              neant
+                                ? `Néant — Inscription ultérieure (1er samedi actif : ${fmtDate(premierSamediActif(l.created_at))})`
+                                : !clickable
+                                  ? 'Samedi gelé — correction Admin uniquement'
+                                  : !arrive
+                                    ? 'Samedi à venir — pas encore comptabilisé'
+                                    : vert
+                                      ? 'Présent — cliquez pour basculer en absent'
+                                      : 'Absent — cliquez pour basculer en présent'
                             }
-                            className={`h-8 w-10 rounded-md text-sm font-bold transition-all duration-150 active:scale-90 ${
-                              vert ? 'bg-emerald-500 text-white' : rouge ? 'bg-alerte text-white' : 'border border-dashed border-slate-300 text-slate-300'
+                            className={`h-8 min-w-[44px] rounded-md px-1 text-xs font-bold transition-all duration-150 active:scale-90 ${
+                              neant
+                                ? 'border border-slate-200 bg-slate-100 text-slate-400 font-normal italic text-[11px]'
+                                : vert ? 'bg-emerald-500 text-white' : rouge ? 'bg-alerte text-white' : 'border border-dashed border-slate-300 text-slate-300'
                             } ${clickable ? 'cursor-pointer hover:opacity-80' : 'cursor-not-allowed opacity-70'}`}
                           >
-                            {vert ? '✓' : rouge ? '✗' : '—'}
+                            {neant ? 'Néant' : vert ? '✓' : rouge ? '✗' : '—'}
                           </button>
                         </td>
                       );
@@ -631,12 +662,17 @@ export default function Presences() {
             <span className="text-xs font-semibold">Absent (rouge)</span>
           </span>
           <span aria-hidden className="text-slate-300">·</span>
+          <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-slate-200 bg-slate-100 px-2.5 text-xs font-semibold text-slate-400">
+            <span>Néant (non inscrit)</span>
+          </span>
+          <span aria-hidden className="text-slate-300">·</span>
           <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-dashed border-slate-300 px-2.5 text-sm font-bold text-slate-400">
             <span aria-hidden>—</span>
             <span className="text-xs font-semibold">à venir (gris)</span>
           </span>
         </div>
         <p className="mt-2 text-xs leading-relaxed text-slate-400">
+          Les samedis antérieurs à l'inscription d'un lecteur affichent <strong className="text-slate-500">Néant</strong> et ne génèrent aucune absence.
           Par défaut un samedi arrivé est <strong className="text-alerte">rouge</strong> :
           tant que la présence n'a pas été basculée au vert, le lecteur est
           considéré comme absent. Un samedi passé est gelé — correction
@@ -652,3 +688,4 @@ export default function Presences() {
     </div>
   );
 }
+

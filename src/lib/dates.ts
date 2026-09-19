@@ -186,3 +186,54 @@ export function samediEstArrive(dateSamedi: string | Date): boolean {
 export function samedisArrives(samedis: string[]): string[] {
   return samedis.filter(samediEstArrive);
 }
+
+// ---------------------------------------------------------------------------
+// Premier samedi actif d'un lecteur (Règle d'entrée en vigueur) :
+//   - Si le lecteur est inscrit un samedi : son 1er samedi actif = ce samedi.
+//   - Si le lecteur est inscrit du dimanche au vendredi : son 1er samedi
+//     actif = le samedi immédiatement suivant.
+//   - Les samedis antérieurs ne le concernent pas (ni présence, ni cotisation).
+// ---------------------------------------------------------------------------
+
+/**
+ * Calcule le premier samedi actif d'un lecteur à partir de sa date d'inscription (`created_at`).
+ */
+export function premierSamediActif(createdAt: string | Date | null | undefined): Date {
+  if (!createdAt) return new Date(0);
+  const d = typeof createdAt === 'string' ? new Date(createdAt) : new Date(createdAt);
+  if (isNaN(d.getTime())) return new Date(0);
+
+  // Convertir en heure du Bénin (minuit)
+  const [y, m, j] = fmtBenin.format(d).split('-').map(Number);
+  const dateBenin = new Date(y, m - 1, j);
+  const dow = dateBenin.getDay(); // 0 = dimanche … 6 = samedi
+  const offset = dow === 6 ? 0 : 6 - dow;
+  dateBenin.setDate(dateBenin.getDate() + offset);
+  return dateBenin;
+}
+
+/** Formate le premier samedi actif sous la forme "AAAA-MM-JJ". */
+export function premierSamediActifISO(createdAt: string | Date | null | undefined): string {
+  return dateISO(premierSamediActif(createdAt));
+}
+
+/**
+ * Vrai si la date du samedi donnée est strictement antérieure au premier samedi actif du lecteur.
+ */
+export function estAvantPremierSamediActif(
+  dateSamedi: string | Date,
+  createdAt: string | Date | null | undefined
+): boolean {
+  if (!createdAt) return false;
+  const sam =
+    typeof dateSamedi === 'string'
+      ? new Date(`${dateSamedi}T12:00:00`)
+      : new Date(dateSamedi);
+  if (isNaN(sam.getTime())) return false;
+  sam.setHours(0, 0, 0, 0);
+
+  const ps = premierSamediActif(createdAt);
+  ps.setHours(0, 0, 0, 0);
+  return sam.getTime() < ps.getTime();
+}
+

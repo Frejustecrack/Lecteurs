@@ -11,9 +11,11 @@ import {
   aujourdhuiBenin,
   dateISO,
   dernierSamedi,
+  estAvantPremierSamediActif,
   estGelee,
   lundiDeSemaine,
   numeroSemaine,
+  premierSamediActifISO,
   samediEstArrive,
   samedisArrives,
   samedisDuMois,
@@ -131,6 +133,13 @@ eq(
   2
 );
 eq('samedisArrives() sur une liste vide', samedisArrives([]).length, 0);
+
+// Premier samedi actif (date d'entrée en vigueur)
+eq('inscrit un samedi (05/09/2026) -> premier samedi = 05/09/2026', premierSamediActifISO('2026-09-05T10:00:00Z'), '2026-09-05');
+eq('inscrit un dimanche (06/09/2026) -> premier samedi = 12/09/2026', premierSamediActifISO('2026-09-06T10:00:00Z'), '2026-09-12');
+eq('inscrit un vendredi (11/09/2026) -> premier samedi = 12/09/2026', premierSamediActifISO('2026-09-11T23:00:00Z'), '2026-09-12');
+verif('05/09/2026 est avant le premier samedi d un lecteur inscrit le 06/09/2026', estAvantPremierSamediActif('2026-09-05', '2026-09-06T10:00:00Z'));
+verif('12/09/2026 n est pas avant le premier samedi d un lecteur inscrit le 06/09/2026', !estAvantPremierSamediActif('2026-09-12', '2026-09-06T10:00:00Z'));
 
 // ============================================================================
 console.log('\n── Validation : années de naissance et d’adhésion ───────────────────');
@@ -379,6 +388,15 @@ eq('samedi unique : 2 absences effectives (Paul absent + Jean non pointé)', app
 const recapVide = calculerRecaps(lect, pres, []);
 eq('période vide : taux 0', recapVide[0].taux, 0);
 eq('période vide : aucun assidu', appliquerFiltreRecap(recapVide, 'parfaits').length, 0);
+
+// Nouveau lecteur inscrit après le 1er samedi de la période (inscrit le 08/09/2026)
+const lectNouveau = [
+  { ...lecteur('d', 'LEC103', 'Dossou', 'Eric', 'fr1'), created_at: '2026-09-08T10:00:00Z' }
+];
+const recapNouveau = calculerRecaps(lectNouveau, [], samedis);
+eq('nouveau lecteur inscrit le 08/09 : 3 samedis comptés au lieu de 4', recapNouveau[0].total, 3);
+eq('nouveau lecteur inscrit le 08/09 : 3 non pointés (05/09 ignoré)', recapNouveau[0].nonSaisi, 3);
+
 
 // ============================================================================
 console.log('\n── Fuseau : « aujourd\'hui » est la date au Bénin (Africa/Lagos) ────');
