@@ -521,6 +521,110 @@ section('8b. Premier samedi actif (triggers presences/cotisations)');
       where lecteur_id = (select id from public.lecteurs where matricule = 'LEC103')
         and date_samedi = public.dernier_samedi()`
   );
+
+  // Le trigger couvre aussi l'UPDATE : même l'admin ne peut pas DÉPLACER une
+  // ligne vers un samedi antérieur au premier samedi actif du lecteur.
+  const psaMoins7 = (await enAdminSql(
+    `select (public.premier_samedi_actif(created_at) - 7)::text d from public.lecteurs where matricule = 'LEC103'`
+  ))[0].d;
+  await attendRefus(
+    'UPDATE qui déplace une présence avant le premier samedi actif refusé (même admin)',
+    'admin',
+    `update public.presences set date_samedi = $2
+      where lecteur_id = (select id from public.lecteurs where matricule = 'LEC103')
+        and date_samedi = public.dernier_samedi()`,
+    [psaMoins7]
+  );
+  await attendRefus(
+    'UPDATE qui déplace une cotisation avant le premier samedi actif refusé (même admin)',
+    'admin',
+    `update public.cotisations set date_samedi = $2
+      where lecteur_id = (select id from public.lecteurs where matricule = 'LEC103')
+        and date_samedi = public.dernier_samedi()`,
+    [psaMoins7]
+  );
+
+  // Dénominateurs du tableau de bord (migration 20260919180000) : les vues
+  // comptent seulement les samedis ARRIVÉS à partir du premier samedi actif de
+  // chaque lecteur — vérifiées contre un calcul brut en SQL propriétaire.
+  const moisRef = (await enAdminSql(`select to_char(public.dernier_samedi(), 'YYYY-MM')::text m`))[0].m;
+  const refElig = (await enAdminSql(`
+    select
+      (select count(*)::int
+         from public.lecteurs l,
+              generate_series(
+                to_date($1 || '-01', 'YYYY-MM-DD')::date,
+                (to_date($1 || '-01', 'YYYY-MM-DD')::date + interval '1 month' - interval '1 day')::date,
+                interval '1 day') g(d)
+        where not l.archived
+          and extract(isodow from g.d::date) = 6
+          and g.d::date <= public.aujourdhui_benin()
+          and g.d::date >= public.premier_samedi_actif(l.created_at)) as paires,
+      (select count(distinct l.id)::int
+         from public.lecteurs l,
+              generate_series(
+                to_date($1 || '-01', 'YYYY-MM-DD')::date,
+                (to_date($1 || '-01', 'YYYY-MM-DD')::date + interval '1 month' - interval '1 day')::date,
+                interval '1 day') g(d)
+        where not l.archived
+          and extract(isodow from g.d::date) = 6
+          and g.d::date <= public.aujourdhui_benin()
+          and g.d::date >= public.premier_samedi_actif(l.created_at)) as lecteurs
+  `, [moisRef]))[0];
+  const vueEligP = (await en('responsable', `select samedis_eligibles from public.v_presences_par_mois where mois = $1`, [moisRef])).rows?.[0];
+  if (vueEligP && Number(vueEligP.samedis_eligibles) === Number(refElig.paires))
+    ok(`v_presences_par_mois.samedis_eligibles = ${refElig.paires} paires (référence brute, ${moisRef})`);
+  else ko('v_presences_par_mois.samedis_eligibles', JSON.stringify({ vue: vueEligP, attendu: refElig.paires }));
+  const vueEligC = (await en('caissier', `select lecteurs_eligibles from public.v_cotisations_par_mois where mois = $1`, [moisRef])).rows?.[0];
+  if (vueEligC && Number(vueEligC.lecteurs_eligibles) === Number(refElig.lecteurs))
+    ok(`v_cotisations_par_mois.lecteurs_eligibles = ${refElig.lecteurs} lecteurs (référence brute, ${moisRef})`);
+  else ko('v_cotisations_par_mois.lecteurs_eligibles', JSON.stringify({ vue: vueEligC, attendu: refElig.lecteurs }));
+
+  // Robustesse « ne doit JAMAIS être comptabilisé » : même si des lignes
+  // antérieures au premier samedi actif existaient en base (données legacy
+  // créées avant la règle), les vues d'agrégats les excluent. Simulation en
+  // désactivant temporairement les triggers (ce que le SQL Editor pourrait
+  // faire) — les vues sont la 2e ligne de défense.
+  const leg = (await enAdminSql(`insert into public.lecteurs (nom, prenom, matricule) values ('LEGACY', 'Test', '') returning id`))[0].id;
+  const legAvant = (await enAdminSql(`select (public.premier_samedi_actif(created_at) - 7)::text d from public.lecteurs where id = $1`, [leg]))[0].d;
+  await enAdminSql(`alter table public.presences disable trigger check_presence_premier_samedi`);
+  await enAdminSql(`alter table public.cotisations disable trigger check_cotisation_premier_samedi`);
+  try {
+    await enAdminSql(`insert into public.presences (lecteur_id, date_samedi, statut) values ($1, $2, 'present')`, [leg, legAvant]);
+    await enAdminSql(`insert into public.cotisations (lecteur_id, date_samedi, paye) values ($1, $2, true)`, [leg, legAvant]);
+  } finally {
+    await enAdminSql(`alter table public.presences enable trigger check_presence_premier_samedi`);
+    await enAdminSql(`alter table public.cotisations enable trigger check_cotisation_premier_samedi`);
+  }
+  const refExclu = (await enAdminSql(`
+    select
+      (select coalesce(count(*) filter (where p.statut = 'present'), 0)::int
+         from public.presences p
+         join public.lecteurs l on l.id = p.lecteur_id and not l.archived
+        where p.date_samedi <= public.aujourdhui_benin()
+          and p.date_samedi >= public.premier_samedi_actif(l.created_at)) as presents_ok,
+      (select coalesce(sum(c.montant), 0)::bigint
+         from public.cotisations c
+         join public.lecteurs l on l.id = c.lecteur_id
+        where c.paye
+          and c.date_samedi >= public.premier_samedi_actif(l.created_at)) as montant_ok
+  `))[0];
+  const legPres = (await en('responsable', `select coalesce(sum(presents), 0)::int s from public.v_presences_par_mois`)).rows?.[0];
+  if (legPres && Number(legPres.s) === Number(refExclu.presents_ok))
+    ok(`v_presences_par_mois exclut la ligne legacy antérieure au premier samedi actif (${refExclu.presents_ok} présents comptés)`);
+  else ko('v_presences_par_mois exclut la ligne legacy', JSON.stringify({ vue: legPres, attendu: refExclu.presents_ok }));
+  const legAnnee = (await en('caissier', `select coalesce(sum(total), 0)::int s from public.v_cotisations_par_annee`)).rows?.[0];
+  const legEnc = (await en('caissier', `select coalesce(sum(total), 0)::int s from public.v_encaissements_par_mois`)).rows?.[0];
+  const legCaisse = (await en('caissier', `select * from public.v_caisse_totaux`)).rows?.[0];
+  if (
+    legAnnee && Number(legAnnee.s) === Number(refExclu.montant_ok) &&
+    legEnc && Number(legEnc.s) === Number(refExclu.montant_ok) &&
+    legCaisse && Number(legCaisse.total_cotisations) === Number(refExclu.montant_ok)
+  )
+    ok(`vues cotisations excluent la ligne legacy (${Number(refExclu.montant_ok)} F comptés partout, caisse incluse)`);
+  else ko('vues cotisations excluent la ligne legacy', JSON.stringify({ annee: legAnnee, enc: legEnc, caisse: legCaisse, attendu: refExclu.montant_ok }));
+  // Nettoyage : la suppression du lecteur cascade sur ses lignes legacy.
+  await enAdminSql(`delete from public.lecteurs where id = $1`, [leg]);
 }
 
 // ---------------------------------------------------------------------------

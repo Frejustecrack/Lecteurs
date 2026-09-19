@@ -252,6 +252,44 @@ function table(doc: jsPDF, opts: Parameters<typeof autoTable>[1]) {
   });
 }
 
+/**
+ * Nom de fichier des exports PDF — format unique et descriptif :
+ *
+ *   lecteur_akogbato_<nature>_<contenu>_<AAAAJJJJ_HHMMSS>.pdf
+ *
+ *  - « lecteur_akogbato » : préfixe commun à TOUS les documents, reconnaissable
+ *    immédiatement (aucun autre sigle) ;
+ *  - nature : le type de document (presences, cotisations, caisse,
+ *    bilan_evenement, fiche_lecteur, liste_lecteurs, suivis) ;
+ *  - contenu : la portée du document (période, fraternité, matricule,
+ *    nom de l'événement…) — on sait ce qu'il contient sans l'ouvrir ;
+ *  - horodatage à la seconde du téléchargement : chaque PDF généré a un nom
+ *    unique, même pour le même document à deux moments différents.
+ *
+ * Le nom est minuscule, sans espaces ni accents : sans ambiguïté sur tous
+ * les systèmes de fichiers et tous les terminaux (Android / iOS / PC).
+ */
+function nomExportPdf(nature: string, ...contenu: (string | null | undefined)[]): string {
+  const nettoyer = (s: string) =>
+    s
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/_{2,}/g, '_')
+      .replace(/^_+|_+$/g, '');
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, '0');
+  const horodatage =
+    `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}` +
+    `_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  const parties = [nature, ...contenu.filter((c) => c && String(c).trim()), horodatage]
+    .map((c) => nettoyer(String(c)))
+    .filter(Boolean)
+    .join('_');
+  return `lecteur_akogbato_${parties}.pdf`;
+}
+
 // ------------------------------------------------------------------
 // 1. Fiche mensuelle des cotisations
 // ------------------------------------------------------------------
@@ -324,7 +362,10 @@ export function exportCotisations(args: {
     },
   });
   piedPage(doc);
-  sauvegarderPdf(doc, `cdlj_cotisations_${annee}-${String(mois + 1).padStart(2, '0')}.pdf`);
+  sauvegarderPdf(
+    doc,
+    nomExportPdf('cotisations', args.periode ?? moisLabel(annee, mois), fraternite)
+  );
 }
 
 // ------------------------------------------------------------------
@@ -406,7 +447,10 @@ export function exportPresences(args: {
     },
   });
   piedPage(doc);
-  sauvegarderPdf(doc, `cdlj_presences_${annee}-${String(mois + 1).padStart(2, '0')}.pdf`);
+  sauvegarderPdf(
+    doc,
+    nomExportPdf('presences', args.periode ?? moisLabel(annee, mois), fraternite)
+  );
 }
 
 // ------------------------------------------------------------------
@@ -503,7 +547,7 @@ export function exportEvenementBilan(args: {
   });
 
   piedPage(doc);
-  sauvegarderPdf(doc, `cdlj_evenement_${e.date_evenement}.pdf`);
+  sauvegarderPdf(doc, nomExportPdf('bilan_evenement', e.nom, e.date_evenement));
 }
 
 // ------------------------------------------------------------------
@@ -543,7 +587,7 @@ export function exportCaisse(args: {
   doc.setFontSize(10.5);
   doc.text(`Solde général de la caisse : ${fmtMoney(soldeGeneral)}`, 14, finY + 18);
   piedPage(doc);
-  sauvegarderPdf(doc, `cdlj_caisse_${periode.replace(/\s/g, '_')}.pdf`);
+  sauvegarderPdf(doc, nomExportPdf('caisse', periode));
 }
 
 // ------------------------------------------------------------------
@@ -689,7 +733,7 @@ export function exportFicheLecteur(args: {
   });
 
   piedPage(doc);
-  sauvegarderPdf(doc, `cdlj_fiche_${l.matricule}.pdf`);
+  sauvegarderPdf(doc, nomExportPdf('fiche_lecteur', l.matricule, l.nom, l.prenom));
 }
 
 // ------------------------------------------------------------------
@@ -786,8 +830,7 @@ export function exportListeLecteurs(args: {
   doc.setTextColor(51, 65, 85);
   doc.text(`Total : ${lecteurs.length} lecteur(s)   •   ${filtres}`, 14, finY);
   piedPage(doc);
-  const horodatage = new Date().toISOString().slice(0, 10);
-  sauvegarderPdf(doc, `cdlj_liste_lecteurs_${statut}_${horodatage}.pdf`);
+  sauvegarderPdf(doc, nomExportPdf('liste_lecteurs', statut, fraternite, grade));
 }
 
 // ------------------------------------------------------------------
@@ -869,8 +912,5 @@ export function exportSuivis(args: {
   );
 
   piedPage(doc);
-  sauvegarderPdf(
-    doc,
-    `cdlj_suivis_${periode.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '')}.pdf`
-  );
+  sauvegarderPdf(doc, nomExportPdf('suivis', periode));
 }

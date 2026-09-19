@@ -805,14 +805,18 @@ export default function LecteurProfil() {
             <div className="mt-3 text-xs text-slate-500">
               Total payé sur le mois :{' '}
               <span className="font-bold text-emerald-600">
-                {fmtMoney(samedisC.reduce((s, d) => s + (cotMoisC.get(d) ?? 0), 0))}
+                {fmtMoney(
+                  samedisC
+                    .filter((d) => !estAvantPremierSamediActif(d, l?.created_at))
+                    .reduce((s, d) => s + (cotMoisC.get(d) ?? 0), 0)
+                )}
               </span>{' '}
               · Total dû :{' '}
               <span className="font-bold text-alerte">
                 {fmtMoney(
                   samedisC
                     .filter((d) => !estAvantPremierSamediActif(d, l?.created_at) && !cotMoisC.get(d) && samediEstArrive(d))
-                    .reduce((s) => s + 50, 0)
+                    .reduce((s) => s + montantCot, 0)
                 )}
               </span>
             </div>

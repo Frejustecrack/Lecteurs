@@ -130,7 +130,12 @@ export default function Suivis() {
       toutesLesLignes<Lecteur>((de, a) =>
         supabase
           .from('lecteurs')
-          .select('id, matricule, nom, prenom, fraternite_id, archived')
+          // created_at OBLIGATOIRE : le récap (lib/recap.ts) détermine le
+          // premier samedi actif de chaque lecteur avec cette colonne. Sans
+          // elle, `estAvantPremierSamediActif` reçoit `undefined` et la règle
+          // « néant avant l'inscription » se tue silencieusement — les samedis
+          // d'avant l'inscription compteraient comme des absences.
+          .select('id, matricule, nom, prenom, fraternite_id, archived, created_at')
           .eq('archived', false)
           .order('matricule')
           .range(de, a)

@@ -57,14 +57,17 @@ const ko = (n, d) => { echecs.push(`${n}${d ? ` — ${d}` : ''}`); console.log(`
 // Capture des documents.
 const produits = [];
 let tablesPresences = [];
+let tablesCotisations = [];
+let suffixeNom = '';
 mod.definirIntercepteurPdf((doc, nom) => {
-  if (nom.startsWith('cdlj_presences')) tablesPresences = [doc.lastAutoTable];
+  if (nom.startsWith('lecteur_akogbato_presences')) tablesPresences = [doc.lastAutoTable];
+  if (nom.startsWith('lecteur_akogbato_cotisations')) tablesCotisations = [doc.lastAutoTable];
   const w = doc.internal.pageSize.getWidth();
   const h = doc.internal.pageSize.getHeight();
   const pages = doc.getNumberOfPages();
   const buffer = Buffer.from(doc.output('arraybuffer'));
-  writeFileSync(join(sortie, nom), buffer);
-  produits.push({ nom, w, h, pages, doc, taille: buffer.length });
+  writeFileSync(join(sortie, nom.replace(/\.pdf$/, `${suffixeNom}.pdf`)), buffer);
+  produits.push({ nom, w, h, pages, doc, taille: buffer.length, suffixe: suffixeNom });
 });
 
 // 2. Jeu de données : 200 lecteurs, septembre 2026.
@@ -134,7 +137,7 @@ for (const p of produits) {
 
 console.log('\n3. Contenu de la fiche des présences');
 {
-  const p = produits.find((x) => x.nom.startsWith('cdlj_presences'));
+  const p = produits.find((x) => x.nom.startsWith('lecteur_akogbato_presences'));
   // Texte brut de toutes les pages (les chaînes sont encodées entre parenthèses dans le flux PDF).
   // Les cellules autoTable restent accessibles : on lit le texte de chaque cellule du corps.
   const cellules = [];
@@ -169,6 +172,80 @@ for (const p of produits) {
   const marge = t.settings.margin.left + t.settings.margin.right;
   if (largeur + marge <= p.w + 0.5) ok(`${p.nom} : tableau ${largeur.toFixed(0)} mm + marges ${marge} mm ≤ ${p.w} mm`);
   else ko(`${p.nom} : tableau déborde`, `${largeur.toFixed(1)} + ${marge} > ${p.w}`);
+}
+
+console.log('\n5. Règle « premier samedi actif » dans les PDF (cellules « Néant »)');
+{
+  // Lecteur inscrit le mardi 2026-09-15 → premier samedi actif = 2026-09-19.
+  // Les samedis 05/09 et 12/09 sont ANTÉRIEURS : aucune ligne possible,
+  // cellules « Néant » grises, ni absence ni cotisation due.
+  const nouveau = {
+    ...lecteurs[0], id: 'l400', matricule: 'LEC400', nom: 'RECENT', prenom: 'Ismaël',
+    created_at: '2026-09-15T10:00:00Z', updated_at: '2026-09-15T10:00:00Z',
+  };
+  const presN = [
+    { id: 1, lecteur_id: 'l400', date_samedi: '2026-09-19', statut: 'present', recorded_by: null, created_at: '', updated_at: '' },
+    { id: 2, lecteur_id: 'l400', date_samedi: '2026-09-26', statut: 'present', recorded_by: null, created_at: '', updated_at: '' },
+  ];
+  const cotN = presN.map((p, k) => ({
+    id: k, lecteur_id: 'l400', date_samedi: p.date_samedi, paye: true, montant: 50,
+    paid_at: '2026-09-19T10:00:00Z', recorded_by: null, created_at: '', updated_at: '',
+  }));
+
+  // Fichiers de test écrits à part (suffixe) : ne pas écraser les 200 lecteurs.
+  suffixeNom = '_test_neant';
+  mod.exportPresences({ ...commun, lecteurs: [nouveau], presences: presN });
+  mod.exportCotisations({ ...commun, lecteurs: [nouveau], cotisations: cotN, montantCot: 50 });
+  suffixeNom = '';
+
+  const ligneDe = (tab, matricule) => {
+    for (const t of tab) for (const row of t.body) {
+      const v = Object.values(row.cells);
+      if (String(v[0]?.text?.join?.(' ') ?? v[0]?.raw ?? '') === matricule) {
+        return v.map((c) => String(c.text?.join?.(' ') ?? c.raw ?? ''));
+      }
+    }
+    return null;
+  };
+  const lignePres = ligneDe(tablesPresences, 'LEC400');
+  const ligneCot = ligneDe(tablesCotisations, 'LEC400');
+  if (lignePres && lignePres[3] === 'Néant' && lignePres[4] === 'Néant' && lignePres[5] === 'Pres' && lignePres[6] === 'Pres')
+    ok('PDF présences : LEC400 (inscrit le 15/09) → « Néant » les 05/09 et 12/09, « Pres » dès le 19/09');
+  else ko('PDF présences : ligne LEC400', JSON.stringify(lignePres));
+  if (lignePres && lignePres[7] === '2' && lignePres[8] === '0')
+    ok('PDF présences : les 2 samedis avant l’inscription ne comptent AUCUNE absence (2 présents, 0 absent)');
+  else ko('PDF présences : compteurs LEC400', JSON.stringify(lignePres?.slice(7)));
+  if (ligneCot && ligneCot[3] === 'Néant' && ligneCot[4] === 'Néant' && ligneCot[5] === '50 F' && ligneCot[6] === '50 F')
+    ok('PDF cotisations : LEC400 → « Néant » les 05/09 et 12/09, « 50 F » dès le 19/09');
+  else ko('PDF cotisations : ligne LEC400', JSON.stringify(ligneCot));
+  if (ligneCot && ligneCot[7] === '100 F' && ligneCot[8] === '0 F')
+    ok('PDF cotisations : total payé 100 F, total dû 0 F — aucun dû sur les samedis avant l’inscription');
+  else ko('PDF cotisations : totaux LEC400', JSON.stringify(ligneCot?.slice(7)));
+}
+
+console.log('\n6. Noms de fichiers : préfixe « lecteur_akogbato », descriptifs, uniques');
+{
+  // Les 2 documents de la section 5 sont des fixtures de test : on contrôle
+  // l'unicité sur les 7 documents « réels » (mêmes noms → mêmes fichiers).
+  const noms = produits.filter((p) => !p.suffixe).map((p) => p.nom);
+  if (noms.every((n) => n.startsWith('lecteur_akogbato_') && n.endsWith('.pdf')))
+    ok('tous les noms commencent par « lecteur_akogbato_ »');
+  else ko('préfixe des noms', noms.filter((n) => !n.startsWith('lecteur_akogbato_')).join(', '));
+  if (noms.every((n) => !/cdlj/i.test(n)))
+    ok('aucun nom ne contient « cdlj »');
+  else ko('« cdlj » encore présent dans un nom');
+  if (new Set(noms).size === noms.length)
+    ok(`les ${noms.length} noms des 7 documents sont tous uniques (horodatage à la seconde)`);
+  else ko('noms en double', noms.join(', '));
+  if (noms.every((n) => /^[a-z0-9_]+\.pdf$/.test(n)))
+    ok('noms minuscules, sans espaces ni accents (sécurisés partout)');
+  else ko('caractères indésirables', noms.filter((n) => !/^[a-z0-9_]+\.pdf$/.test(n)).join(', '));
+  const attenduNature = ['_presences_', '_cotisations_', '_liste_lecteurs_', '_bilan_evenement_', '_caisse_', '_fiche_lecteur_', '_suivis_'];
+  const manquants = attenduNature.filter((nat) => !noms.some((n) => n.includes(nat)));
+  if (manquants.length === 0)
+    ok('la nature de chaque document est lisible dans son nom (presences, cotisations, liste_lecteurs, bilan_evenement, caisse, fiche_lecteur, suivis)');
+  else ko('nature lisible manquante', manquants.join(', '));
+  for (const n of [...noms, ...produits.filter((p) => p.suffixe).map((p) => p.nom)]) console.log(`      • ${n}`);
 }
 
 console.log(`\nFichiers écrits dans ${sortie}`);
