@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   dateISO,
   deplaceMois,
+  estAvantPremierSamediActif,
   fmtDate,
   fmtDateHeure,
   fmtMoney,
@@ -108,12 +109,23 @@ export default function Caisse() {
           .range(de, a)
       ),
       // 200 lecteurs max : colonnes minimales, paginé pour éviter troncature PostgREST
+      // created_at : règle « premier samedi actif » — la liste des mouvements
+      // doit afficher exactement ce que comptent les vues d'agrégats.
       toutesLesLignes<Lecteur>((de, a) =>
-        supabase.from('lecteurs').select('id, matricule').order('matricule').range(de, a)
+        supabase
+          .from('lecteurs')
+          .select('id, matricule, created_at')
+          .order('matricule')
+          .range(de, a)
       ),
       supabase.from('profiles').select('id, full_name'),
     ]);
-    setCotsMois((rCM.data ?? []) as Cotisation[]);
+    const mapCree = new Map(((rL.data ?? []) as Lecteur[]).map((l) => [l.id, l.created_at]));
+    setCotsMois(
+      ((rCM.data ?? []) as Cotisation[]).filter(
+        (c) => !mapCree.has(c.lecteur_id) || !estAvantPremierSamediActif(c.date_samedi, mapCree.get(c.lecteur_id))
+      )
+    );
     const t = (rTot.data ?? null) as { total_cotisations: number } | null;
     setTotalCotTout(t ? Number(t.total_cotisations) : 0);
     const a = (rAn.data ?? null) as { total: number } | null;

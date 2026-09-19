@@ -227,14 +227,17 @@ export default function Cotisations() {
   }
 
   // --------------------------------------------------------------- totaux
+  /** Total payé sur la vue — même filtre que les colonnes de chaque ligne : les samedis antérieurs au premier samedi actif ne comptent jamais. */
   const totalPaye = filtered.reduce(
     (s, l) =>
       s +
-      samedis.reduce(
-        (ss, sam) =>
-          ss + (map.get(`${l.id}|${sam}`)?.paye ? map.get(`${l.id}|${sam}`)!.montant : 0),
-        0
-      ),
+      samedis
+        .filter((sam) => !estAvantPremierSamediActif(sam, l.created_at))
+        .reduce(
+          (ss, sam) =>
+            ss + (map.get(`${l.id}|${sam}`)?.paye ? map.get(`${l.id}|${sam}`)!.montant : 0),
+          0
+        ),
     0
   );
   /** Samedis arrivés et non réglés à partir du premier samedi actif — les samedis antérieurs ou à venir ne comptent pas. */
