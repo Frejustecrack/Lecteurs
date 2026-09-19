@@ -9,10 +9,12 @@ import {
   deplaceMois,
   deplaceSemaine,
   dimancheDeSemaine,
+  estAvantPremierSamediActif,
   fmtDate,
   fmtMoney,
   lundiDeSemaine,
   moisLabel,
+  premierSamediActif,
   samediEstArrive,
   samedisDuMois,
   samedisSemaine,
@@ -95,7 +97,7 @@ export default function Cotisations() {
       toutesLesLignes<Lecteur>((de, a) =>
         supabase
           .from('lecteurs')
-          .select('id, matricule, nom, prenom, fraternite_id, archived')
+          .select('id, matricule, nom, prenom, fraternite_id, archived, created_at')
           .eq('archived', false)
           .order('matricule')
           .range(de, a)
@@ -153,6 +155,13 @@ export default function Cotisations() {
   }, [lecteurs, fId, search]);
 
   async function toggle(l: Lecteur, sam: string) {
+    if (estAvantPremierSamediActif(sam, l.created_at)) {
+      toast(
+        `Ce samedi est antérieur au premier samedi actif de ${l.prenom} (${fmtDate(premierSamediActif(l.created_at))}).`,
+        'err'
+      );
+      return;
+    }
     if (!isCaissier) {
       toast(
         "Vous n'êtes pas autorisé à saisir les cotisations : cette opération est réservée aux Caissiers.",
@@ -161,28 +170,23 @@ export default function Cotisations() {
       return;
     }
     const current = map.get(`${l.id}|${sam}`);
-    let error: { message: string } | null = null;
+    const nextPaye = !current?.paye;
     setCelluleActive(`${l.id}|${sam}`);
-    if (current?.paye) {
-      ({ error } = await supabase
-        .from('cotisations')
-        .update({ paye: false })
-        .eq('id', current.id));
-    } else {
-      ({ error } = await supabase
-        .from('cotisations')
-        .upsert(
-          // montant, paid_at et recorded_by sont posés par la base
-          // (triggers fixer_montant_cotisation / forcer_auteur).
-          { lecteur_id: l.id, date_samedi: sam, paye: true },
-          { onConflict: 'lecteur_id,date_samedi' }
-        ));
-    }
+    const { error } = await supabase.from('cotisations').upsert(
+      {
+        lecteur_id: l.id,
+        date_samedi: sam,
+        paye: nextPaye,
+        montant: nextPaye ? montantCot : 0,
+      },
+      { onConflict: 'lecteur_id,date_samedi' }
+    );
     setCelluleActive(null);
     if (error) {
       toast(traduireErreur(error, 'enregistrer cette cotisation'), 'err');
       return;
     }
+    toast(nextPaye ? `Cotisation enregistrée (${fmtMoney(montantCot)}).` : 'Cotisation marquée comme due.');
     load();
   }
 
@@ -192,25 +196,28 @@ export default function Cotisations() {
       return;
     }
     if (samedisArrivesListe.length === 0) {
-      toast('Aucun samedi arrivé.', 'err');
+      toast('Aucun samedi arrivé à marquer.', 'err');
       return;
     }
-    if (!confirm(`Marquer ${filtered.length} lecteur(s) comme ${paye ? 'payés' : 'dus'} sur ${samedisArrivesListe.length} samedi(s) ?`)) return;
+    if (!confirm(`Marquer les cotisations de ${filtered.length} lecteur(s) comme ${paye ? 'payées' : 'dues'} ?`)) return;
     setBusyBulk(true);
     try {
       const payload = filtered.flatMap((l) =>
-        samedisArrivesListe.map((sam) => ({
-          lecteur_id: l.id,
-          date_samedi: sam,
-          paye,
-        }))
+        samedisArrivesListe
+          .filter((sam) => !estAvantPremierSamediActif(sam, l.created_at))
+          .map((sam) => ({
+            lecteur_id: l.id,
+            date_samedi: sam,
+            paye,
+            montant: paye ? montantCot : 0,
+          }))
       );
       for (let i = 0; i < payload.length; i += 200) {
         const chunk = payload.slice(i, i + 200);
         const { error } = await supabase.from('cotisations').upsert(chunk, { onConflict: 'lecteur_id,date_samedi' });
         if (error) throw error;
       }
-      toast(`${filtered.length} lecteur(s) marqués ${paye ? 'payés' : 'dus'}.`);
+      toast(`${filtered.length} lecteur(s) marqués ${paye ? 'payés' : 'dus'} sur leurs samedis actifs.`);
       load();
     } catch (e) {
       toast(traduireErreur(e, 'marquer les cotisations en masse'), 'err');
@@ -230,10 +237,13 @@ export default function Cotisations() {
       ),
     0
   );
-  /** Samedis arrivés et non réglés — les samedis à venir ne comptent pas. */
+  /** Samedis arrivés et non réglés à partir du premier samedi actif — les samedis antérieurs ou à venir ne comptent pas. */
   const nbDu = filtered.reduce(
     (s, l) =>
-      s + samedisArrivesListe.filter((sam) => !map.get(`${l.id}|${sam}`)?.paye).length,
+      s +
+      samedisArrivesListe.filter(
+        (sam) => !estAvantPremierSamediActif(sam, l.created_at) && !map.get(`${l.id}|${sam}`)?.paye
+      ).length,
     0
   );
 
@@ -357,7 +367,7 @@ export default function Cotisations() {
           label="Cotisations dues (vue)"
           value={fmtMoney(nbDu * montantCot)}
           tone="red"
-          sub={`${nbDu} samedi(s) arrivé(s) non réglé(s)`}
+          sub={`${nbDu} samedi(s) actif(s) non réglé(s)`}
         />
         <StatCard
           label="Samedis comptés"
@@ -421,16 +431,20 @@ export default function Cotisations() {
           <ul className="space-y-2 sm:hidden">
             {filtered.map((l) => {
               const sam = samedis[0];
-              const c = sam ? map.get(`${l.id}|${sam}`) : undefined;
+              const neant = sam ? estAvantPremierSamediActif(sam, l.created_at) : false;
+              const c = sam && !neant ? map.get(`${l.id}|${sam}`) : undefined;
               const arrive = sam ? samediEstArrive(sam) : false;
-              const duCeSamedi = sam ? !c?.paye && arrive : false;
+              const duCeSamedi = sam && !neant ? !c?.paye && arrive : false;
               let paye = 0;
               let du = 0;
               samedis.forEach((s) => {
-                const cc = map.get(`${l.id}|${s}`);
-                if (cc?.paye) paye += cc.montant;
-                else if (samediEstArrive(s)) du += 1;
+                if (!estAvantPremierSamediActif(s, l.created_at)) {
+                  const cc = map.get(`${l.id}|${s}`);
+                  if (cc?.paye) paye += cc.montant;
+                  else if (samediEstArrive(s)) du += 1;
+                }
               });
+              const clickable = !neant && isCaissier;
               return (
                 <li key={l.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
                   <div className="min-w-0 flex-1">
@@ -443,15 +457,31 @@ export default function Cotisations() {
                     </div>
                   </div>
                   <button
-                    onClick={() => sam && toggle(l, sam)}
-                    disabled={!isCaissier || !sam}
+                    onClick={() => sam && clickable && toggle(l, sam)}
+                    disabled={!clickable || !sam}
                     aria-busy={celluleActive === `${l.id}|${sam}` || undefined}
-                    title={!isCaissier ? 'Lecture seule — saisie réservée aux Caissiers' : c?.paye ? 'Payé — cliquez pour repasser en dû' : duCeSamedi ? 'Dû — cliquez pour déclarer' : 'Samedi à venir'}
+                    title={
+                      neant
+                        ? `Néant — Inscription ultérieure (1er samedi actif : ${fmtDate(premierSamediActif(l.created_at))})`
+                        : !isCaissier
+                          ? 'Lecture seule — saisie réservée aux Caissiers'
+                          : c?.paye
+                            ? 'Payé — cliquez pour repasser en dû'
+                            : duCeSamedi
+                              ? 'Dû — cliquez pour déclarer'
+                              : 'Samedi à venir'
+                    }
                     className={`min-w-[72px] shrink-0 rounded-xl px-3 py-3 text-xs font-bold transition-all duration-150 active:scale-90 ${
-                      c?.paye ? 'bg-emerald-500 text-white' : duCeSamedi ? 'bg-alerte text-white' : 'border border-dashed border-slate-300 text-slate-400'
-                    } ${isCaissier ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
+                      neant
+                        ? 'border border-slate-200 bg-slate-100 text-slate-400 font-normal italic'
+                        : c?.paye
+                          ? 'bg-emerald-500 text-white'
+                          : duCeSamedi
+                            ? 'bg-alerte text-white'
+                            : 'border border-dashed border-slate-300 text-slate-400'
+                    } ${clickable ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
                   >
-                    {c?.paye ? `${c.montant} F ✓` : duCeSamedi ? 'dû' : '—'}
+                    {neant ? 'Néant' : c?.paye ? `${c.montant} F ✓` : duCeSamedi ? 'dû' : '—'}
                   </button>
                 </li>
               );
@@ -485,9 +515,11 @@ export default function Cotisations() {
                 let paye = 0;
                 let du = 0;
                 samedis.forEach((sam) => {
-                  const c = map.get(`${l.id}|${sam}`);
-                  if (c?.paye) paye += c.montant;
-                  else if (samediEstArrive(sam)) du += 1;
+                  if (!estAvantPremierSamediActif(sam, l.created_at)) {
+                    const c = map.get(`${l.id}|${sam}`);
+                    if (c?.paye) paye += c.montant;
+                    else if (samediEstArrive(sam)) du += 1;
+                  }
                 });
                 return (
                   <tr key={l.id} className="hover:bg-slate-50/60">
@@ -503,39 +535,43 @@ export default function Cotisations() {
                       </Link>
                     </td>
                     {samedis.map((sam) => {
-                      const c = map.get(`${l.id}|${sam}`);
+                      const neant = estAvantPremierSamediActif(sam, l.created_at);
+                      const c = !neant ? map.get(`${l.id}|${sam}`) : undefined;
                       const arrive = samediEstArrive(sam);
-                      // Rouge par défaut dès que le samedi est arrivé :
-                      // tant que le paiement n'est pas déclaré, il est dû.
-                      const duCeSamedi = !c?.paye && arrive;
+                      const duCeSamedi = !neant && !c?.paye && arrive;
+                      const clickable = !neant && isCaissier;
                       return (
                         <td key={sam} className="px-2 py-2 text-center">
                           <button
-                            onClick={() => toggle(l, sam)}
-                            disabled={!isCaissier}
+                            onClick={() => clickable && toggle(l, sam)}
+                            disabled={!clickable}
                             aria-busy={celluleActive === `${l.id}|${sam}` || undefined}
                             title={
-                              !isCaissier
-                                ? "Lecture seule — saisie réservée aux Caissiers"
-                                : c?.paye
-                                  ? 'Payé — cliquez pour repasser en dû'
-                                  : duCeSamedi
-                                    ? 'Dû — cliquez pour déclarer le paiement'
-                                    : 'Samedi à venir — pas encore comptabilisé'
+                              neant
+                                ? `Néant — Inscription ultérieure (1er samedi actif : ${fmtDate(premierSamediActif(l.created_at))})`
+                                : !isCaissier
+                                  ? "Lecture seule — saisie réservée aux Caissiers"
+                                  : c?.paye
+                                    ? 'Payé — cliquez pour repasser en dû'
+                                    : duCeSamedi
+                                      ? 'Dû — cliquez pour déclarer le paiement'
+                                      : 'Samedi à venir — pas encore comptabilisé'
                             }
                             className={`min-w-[52px] rounded-md px-2 py-1.5 text-xs font-bold transition-all duration-150 active:scale-90 ${
-                              c?.paye
-                                ? 'bg-emerald-500 text-white'
-                                : duCeSamedi
-                                  ? 'bg-alerte text-white'
-                                  : 'border border-dashed border-slate-300 text-slate-400'
+                              neant
+                                ? 'border border-slate-200 bg-slate-100 text-slate-400 font-normal italic text-[11px]'
+                                : c?.paye
+                                  ? 'bg-emerald-500 text-white'
+                                  : duCeSamedi
+                                    ? 'bg-alerte text-white'
+                                    : 'border border-dashed border-slate-300 text-slate-400'
                             } ${
-                              isCaissier
+                              clickable
                                 ? 'cursor-pointer hover:opacity-80'
                                 : 'cursor-default'
                             }`}
                           >
-                            {c?.paye ? `${c.montant} F ✓` : duCeSamedi ? 'dû' : '—'}
+                            {neant ? 'Néant' : c?.paye ? `${c.montant} F ✓` : duCeSamedi ? 'dû' : '—'}
                           </button>
                         </td>
                       );
@@ -577,9 +613,11 @@ export default function Cotisations() {
                 let paye = 0;
                 let du = 0;
                 samedis.forEach((sam) => {
-                  const c = map.get(`${l.id}|${sam}`);
-                  if (c?.paye) paye += c.montant;
-                  else if (samediEstArrive(sam)) du += 1;
+                  if (!estAvantPremierSamediActif(sam, l.created_at)) {
+                    const c = map.get(`${l.id}|${sam}`);
+                    if (c?.paye) paye += c.montant;
+                    else if (samediEstArrive(sam)) du += 1;
+                  }
                 });
                 return (
                   <tr key={l.id} className="hover:bg-slate-50/60">
@@ -590,21 +628,39 @@ export default function Cotisations() {
                       </Link>
                     </td>
                     {samedis.map((sam) => {
-                      const c = map.get(`${l.id}|${sam}`);
+                      const neant = estAvantPremierSamediActif(sam, l.created_at);
+                      const c = !neant ? map.get(`${l.id}|${sam}`) : undefined;
                       const arrive = samediEstArrive(sam);
-                      const duCeSamedi = !c?.paye && arrive;
+                      const duCeSamedi = !neant && !c?.paye && arrive;
+                      const clickable = !neant && isCaissier;
                       return (
                         <td key={sam} className="px-2 py-2 text-center">
                           <button
-                            onClick={() => toggle(l, sam)}
-                            disabled={!isCaissier}
+                            onClick={() => clickable && toggle(l, sam)}
+                            disabled={!clickable}
                             aria-busy={celluleActive === `${l.id}|${sam}` || undefined}
-                            title={!isCaissier ? 'Lecture seule — saisie réservée aux Caissiers' : c?.paye ? 'Payé — cliquez pour repasser en dû' : duCeSamedi ? 'Dû — cliquez pour déclarer le paiement' : 'Samedi à venir — pas encore comptabilisé'}
+                            title={
+                              neant
+                                ? `Néant — Inscription ultérieure (1er samedi actif : ${fmtDate(premierSamediActif(l.created_at))})`
+                                : !isCaissier
+                                  ? 'Lecture seule — saisie réservée aux Caissiers'
+                                  : c?.paye
+                                    ? 'Payé — cliquez pour repasser en dû'
+                                    : duCeSamedi
+                                      ? 'Dû — cliquez pour déclarer le paiement'
+                                      : 'Samedi à venir — pas encore comptabilisé'
+                            }
                             className={`min-w-[52px] rounded-md px-2 py-1.5 text-xs font-bold transition-all duration-150 active:scale-90 ${
-                              c?.paye ? 'bg-emerald-500 text-white' : duCeSamedi ? 'bg-alerte text-white' : 'border border-dashed border-slate-300 text-slate-400'
-                            } ${isCaissier ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
+                              neant
+                                ? 'border border-slate-200 bg-slate-100 text-slate-400 font-normal italic text-[11px]'
+                                : c?.paye
+                                  ? 'bg-emerald-500 text-white'
+                                  : duCeSamedi
+                                    ? 'bg-alerte text-white'
+                                    : 'border border-dashed border-slate-300 text-slate-400'
+                            } ${clickable ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
                           >
-                            {c?.paye ? `${c.montant} F ✓` : duCeSamedi ? 'dû' : '—'}
+                            {neant ? 'Néant' : c?.paye ? `${c.montant} F ✓` : duCeSamedi ? 'dû' : '—'}
                           </button>
                         </td>
                       );
@@ -620,7 +676,8 @@ export default function Cotisations() {
       )}
 
       <p className="mt-3 text-xs text-slate-400">
-        Par défaut, un samedi arrivé est <strong className="text-alerte">dû</strong> :
+        Les samedis antérieurs à l'inscription d'un lecteur affichent <strong className="text-slate-500">Néant</strong> et ne génèrent aucun dû.
+        Par défaut, un samedi arrivé actif est <strong className="text-alerte">dû</strong> :
         tant que le Caissier n'a pas basculé la case au vert, le lecteur est
         considéré comme n'ayant pas payé. L'absence ne dispense pas du paiement.
         Les samedis à venir ne sont pas comptabilisés. Les mois passés restent

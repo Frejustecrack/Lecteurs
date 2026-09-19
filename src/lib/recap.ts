@@ -2,6 +2,7 @@
  * Récapitulatif des présences / absences — logique pure utilisée par le module
  * « Suivis ». Isolée du composant React pour pouvoir être vérifiée directement.
  */
+import { estAvantPremierSamediActif } from './dates.ts';
 import type { Lecteur, Presence } from './types';
 
 export interface Recap {
@@ -45,11 +46,15 @@ export function calculerRecaps(
   samedis: string[]
 ): Recap[] {
   const index = indexPresences(presences);
-  const total = samedis.length;
   return lecteurs.map((lecteur) => {
+    // Les samedis éligibles pour ce lecteur (à partir de son premier samedi actif)
+    const samedisApplicables = samedis.filter(
+      (s) => !estAvantPremierSamediActif(s, lecteur.created_at)
+    );
+    const total = samedisApplicables.length;
     let present = 0;
     let absent = 0;
-    samedis.forEach((s) => {
+    samedisApplicables.forEach((s) => {
       const st = index.get(`${lecteur.id}|${s}`);
       if (st === 'present') present++;
       else if (st === 'absent') absent++;
