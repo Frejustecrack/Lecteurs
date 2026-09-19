@@ -60,14 +60,14 @@ let tablesPresences = [];
 let tablesCotisations = [];
 let suffixeNom = '';
 mod.definirIntercepteurPdf((doc, nom) => {
-  if (nom.startsWith('cdlj_presences')) tablesPresences = [doc.lastAutoTable];
-  if (nom.startsWith('cdlj_cotisations')) tablesCotisations = [doc.lastAutoTable];
+  if (nom.startsWith('lecteur_akogbato_presences')) tablesPresences = [doc.lastAutoTable];
+  if (nom.startsWith('lecteur_akogbato_cotisations')) tablesCotisations = [doc.lastAutoTable];
   const w = doc.internal.pageSize.getWidth();
   const h = doc.internal.pageSize.getHeight();
   const pages = doc.getNumberOfPages();
   const buffer = Buffer.from(doc.output('arraybuffer'));
   writeFileSync(join(sortie, nom.replace(/\.pdf$/, `${suffixeNom}.pdf`)), buffer);
-  produits.push({ nom, w, h, pages, doc, taille: buffer.length });
+  produits.push({ nom, w, h, pages, doc, taille: buffer.length, suffixe: suffixeNom });
 });
 
 // 2. Jeu de données : 200 lecteurs, septembre 2026.
@@ -137,7 +137,7 @@ for (const p of produits) {
 
 console.log('\n3. Contenu de la fiche des présences');
 {
-  const p = produits.find((x) => x.nom.startsWith('cdlj_presences'));
+  const p = produits.find((x) => x.nom.startsWith('lecteur_akogbato_presences'));
   // Texte brut de toutes les pages (les chaînes sont encodées entre parenthèses dans le flux PDF).
   // Les cellules autoTable restent accessibles : on lit le texte de chaque cellule du corps.
   const cellules = [];
@@ -192,8 +192,11 @@ console.log('\n5. Règle « premier samedi actif » dans les PDF (cellules « N�
     paid_at: '2026-09-19T10:00:00Z', recorded_by: null, created_at: '', updated_at: '',
   }));
 
+  // Fichiers de test écrits à part (suffixe) : ne pas écraser les 200 lecteurs.
+  suffixeNom = '_test_neant';
   mod.exportPresences({ ...commun, lecteurs: [nouveau], presences: presN });
   mod.exportCotisations({ ...commun, lecteurs: [nouveau], cotisations: cotN, montantCot: 50 });
+  suffixeNom = '';
 
   const ligneDe = (tab, matricule) => {
     for (const t of tab) for (const row of t.body) {
@@ -218,6 +221,31 @@ console.log('\n5. Règle « premier samedi actif » dans les PDF (cellules « N�
   if (ligneCot && ligneCot[7] === '100 F' && ligneCot[8] === '0 F')
     ok('PDF cotisations : total payé 100 F, total dû 0 F — aucun dû sur les samedis avant l’inscription');
   else ko('PDF cotisations : totaux LEC400', JSON.stringify(ligneCot?.slice(7)));
+}
+
+console.log('\n6. Noms de fichiers : préfixe « lecteur_akogbato », descriptifs, uniques');
+{
+  // Les 2 documents de la section 5 sont des fixtures de test : on contrôle
+  // l'unicité sur les 7 documents « réels » (mêmes noms → mêmes fichiers).
+  const noms = produits.filter((p) => !p.suffixe).map((p) => p.nom);
+  if (noms.every((n) => n.startsWith('lecteur_akogbato_') && n.endsWith('.pdf')))
+    ok('tous les noms commencent par « lecteur_akogbato_ »');
+  else ko('préfixe des noms', noms.filter((n) => !n.startsWith('lecteur_akogbato_')).join(', '));
+  if (noms.every((n) => !/cdlj/i.test(n)))
+    ok('aucun nom ne contient « cdlj »');
+  else ko('« cdlj » encore présent dans un nom');
+  if (new Set(noms).size === noms.length)
+    ok(`les ${noms.length} noms des 7 documents sont tous uniques (horodatage à la seconde)`);
+  else ko('noms en double', noms.join(', '));
+  if (noms.every((n) => /^[a-z0-9_]+\.pdf$/.test(n)))
+    ok('noms minuscules, sans espaces ni accents (sécurisés partout)');
+  else ko('caractères indésirables', noms.filter((n) => !/^[a-z0-9_]+\.pdf$/.test(n)).join(', '));
+  const attenduNature = ['_presences_', '_cotisations_', '_liste_lecteurs_', '_bilan_evenement_', '_caisse_', '_fiche_lecteur_', '_suivis_'];
+  const manquants = attenduNature.filter((nat) => !noms.some((n) => n.includes(nat)));
+  if (manquants.length === 0)
+    ok('la nature de chaque document est lisible dans son nom (presences, cotisations, liste_lecteurs, bilan_evenement, caisse, fiche_lecteur, suivis)');
+  else ko('nature lisible manquante', manquants.join(', '));
+  for (const n of [...noms, ...produits.filter((p) => p.suffixe).map((p) => p.nom)]) console.log(`      • ${n}`);
 }
 
 console.log(`\nFichiers écrits dans ${sortie}`);
