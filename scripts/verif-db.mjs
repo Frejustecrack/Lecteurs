@@ -80,7 +80,7 @@ for (const f of fichiers) {
 // (« default privileges » du schéma public) ; la sécurité réelle repose sur
 // les policies RLS. On reproduit cet environnement.
 await db.exec(`
-  grant usage on schema public to anon, authenticated;
+  grant usage on schema public, auth to anon, authenticated;
   grant all on all tables in schema public to authenticated;
   grant all on all sequences in schema public to authenticated;
   grant execute on all functions in schema public to authenticated;
@@ -675,6 +675,69 @@ section('9. Temps réel (publication supabase_realtime)');
     if (r.relreplident === 'f') ok(`${r.relname} : replica identity full`);
     else ko(`${r.relname} : replica identity ${r.relreplident}`);
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// 10. Anniversaires : filtrage serveur, confidentialité, droits d'export.
+// Horloge SQL contrôlée puis restaurée : aucun accès à la production.
+// ---------------------------------------------------------------------------
+section('10. Anniversaires du mois courant');
+{
+  const definitionHorloge = (await enAdminSql(`select pg_get_functiondef('public.aujourdhui_benin()'::regprocedure) as sql`))[0].sql;
+  const fixerDate = async (date) => db.exec(`create or replace function public.aujourdhui_benin() returns date language sql stable as $$ select date '${date}' $$;`);
+  try {
+    await fixerDate('2026-09-19');
+    const ids = [];
+    for (const [prenom, date, archive] of [
+      ['Jean', '2008-09-24', false], ['Alice', '2010-09-24', false],
+      ['Octobre', '2008-10-24', false], ['Sans date', null, false],
+      ['Archive', '2008-09-15', true], ['Bissextile', '2008-02-29', false],
+      ['Futur', '2099-09-24', false], ['Infini', 'infinity', false], ['Passe infini', '-infinity', false],
+    ]) {
+      ids.push((await enAdminSql(`insert into lecteurs (matricule,nom,prenom,date_naissance,archived,created_at) values ('','TEST ANNIVERSAIRE',$1,$2,$3,'2020-01-01') returning id`, [prenom,date,archive]))[0].id);
+    }
+    for (const role of ['admin','co','co_paroissial','caissier','responsable']) {
+      const r = await en(role, `select * from v_anniversaires_mois where id = any($1::uuid[]) order by prenom`, [ids]);
+      if (r.rows?.length === 2 && r.rows.every(l=>l.mois===9 && l.annee===2026)) ok(`${role} : uniquement les deux anniversaires actifs de septembre, même jour`);
+      else ko(`${role} : filtre anniversaire`, JSON.stringify(r));
+    }
+    const jean = (await en('admin', `select * from carte_anniversaire($1)`, [ids[0]])).rows?.[0];
+    if (jean?.age_atteint === 18) ok('âge serveur : 18 ans le 24 septembre, même avant la date'); else ko('âge serveur', JSON.stringify(jean));
+    const champs = Object.keys(jean ?? {}).sort().join(',');
+    if (champs === ['id','matricule','nom','prenom','jour','mois','annee','age_atteint'].sort().join(',')) ok('projection minimale : ni date de naissance complète, ni adresse/contact'); else ko('projection minimale',champs);
+    for (const role of ['admin','co','co_paroissial','caissier']) {
+      const r = await en(role, `select * from carte_anniversaire($1)`, [ids[0]]);
+      if (r.rows?.length===1) ok(`${role} : export individuel autorisé`); else ko(`${role} : export individuel`,JSON.stringify(r));
+    }
+    for (const role of ['responsable','sans_role']) await attendRefus(`${role} : export anniversaire interdit côté serveur`,role,`select * from carte_anniversaire($1)`,[ids[0]]);
+    const sansRole = await en('sans_role', `select * from v_anniversaires_mois`);
+    if (sansRole.rows?.length===0) ok('compte sans rôle : aucune donnée anniversaire'); else ko('lecture anniversaire sans rôle');
+    try { await db.exec(`set role anon; select * from public.v_anniversaires_mois;`); ko('anonyme ne lit pas les anniversaires'); }
+    catch { ok('anonyme ne lit pas les anniversaires'); }
+    finally { await db.exec('reset role'); }
+    try { await db.exec(`set role anon; select * from public.carte_anniversaire('${ids[0]}');`); ko('anonyme ne peut pas exporter'); }
+    catch { ok('anonyme ne peut pas exporter'); }
+    finally { await db.exec('reset role'); }
+    for (const id of [ids[2],ids[3],ids[4],ids[6],ids[7],ids[8],'00000000-0000-0000-0000-999999999999']) {
+      const r = await en('admin', `select * from carte_anniversaire($1)`, [id]);
+      if (r.rows?.length===0) ok('export : autre mois/archivé/date absente ou invalide/inconnu exclu'); else ko('export exclu',JSON.stringify(r));
+    }
+    await fixerDate('2026-10-01');
+    const octobre=await en('admin',`select * from v_anniversaires_mois where id=any($1::uuid[])`,[ids]);
+    if (octobre.rows?.length===1 && octobre.rows[0].prenom==='Octobre') ok('changement de mois SQL : octobre remplace septembre'); else ko('octobre',JSON.stringify(octobre));
+    const ancien=await en('admin',`select * from carte_anniversaire($1)`,[ids[0]]);
+    if(ancien.rows?.length===0) ok('ancien onglet : export de septembre impossible en octobre'); else ko('ancien onglet');
+    await fixerDate('2026-11-01');
+    const vide=await en('admin',`select * from v_anniversaires_mois where id=any($1::uuid[])`,[ids]);
+    if (vide.rows?.length===0) ok('aucun anniversaire : réponse vide'); else ko('réponse vide');
+    await fixerDate('2027-02-01');
+    const fevrier=await en('admin',`select * from carte_anniversaire($1)`,[ids[5]]);
+    if (fevrier.rows?.[0]?.jour===29 && fevrier.rows[0].mois===2 && fevrier.rows[0].age_atteint===19) ok('29 février conservé en année commune, âge de la nouvelle année'); else ko('29 février',JSON.stringify(fevrier));
+    const options=(await enAdminSql(`select reloptions from pg_class where oid='v_anniversaires_mois'::regclass`))[0].reloptions;
+    if(options.includes('security_invoker=true')) ok('vue anniversaire respecte les RLS du lecteur'); else ko('security_invoker');
+    await attendRefus('date de naissance impossible refusée par PostgreSQL','admin',`insert into lecteurs (matricule,nom,prenom,date_naissance) values ('','TEST ANNIVERSAIRE','Date invalide','2009-02-29') returning id`);
+  } finally { await db.exec(definitionHorloge); }
 }
 
 // ---------------------------------------------------------------------------

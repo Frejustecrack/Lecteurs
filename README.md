@@ -425,3 +425,57 @@ samedi concerné. Ne pas réinitialiser la base ni rejouer les scripts de nettoy
 Vérifications : `npm run verif:all` et `npm run build`. Les tests couvrent notamment
 les homonymes/accents, le tri réel des cinq PDF et le blocage des présences futures
 pour tous les rôles, y compris les lignes historiques et les upserts.
+
+## Anniversaires — mois courant uniquement
+
+L'onglet **Anniversaires** (`/anniversaires`) affiche les lecteurs **actifs** dont
+l'anniversaire tombe dans le mois courant au Bénin. Il n'y a ni calendrier annuel
+ni navigation entre mois. Le mois se met à jour automatiquement (contrôle toutes
+les 30 secondes et au retour sur l'onglet). Le tri reste alphabétique par nom.
+
+### Données et droits
+
+- `v_anniversaires_mois` filtre dans PostgreSQL, avec un index du mois de naissance.
+  Le navigateur reçoit seulement `id`, `matricule`, `nom`, `prenom`, `jour`, `mois`,
+  `annee` et `age_atteint` — **pas la date de naissance complète, ni les contacts**.
+- L'âge est `année courante − année de naissance` : âge atteint cette année,
+  même avant l'anniversaire. Le 29 février reste affiché en février en année commune.
+- Les dates absentes, non finies, futures et les lecteurs archivés sont exclus.
+- La vue utilise `security_invoker` : RLS existantes conservées, compte sans rôle
+  exclu. L'anonyme n'a accès ni à la vue ni à la fonction d'export.
+- `carte_anniversaire(uuid)` relit un seul lecteur du mois au clic et contrôle
+  les droits côté serveur. Admin, CO, CO paroissial et Caissier peuvent exporter ;
+  Responsable peut seulement consulter, conformément aux autres exports.
+- **Aucun champ sexe/genre ni photo n'existe dans le schéma versionné actuel.**
+  La page utilise des initiales et la carte un texte neutre. Aucun sexe n'est déduit
+  du prénom, aucune nouvelle donnée personnelle n'est ajoutée. Le helper de messages
+  prévoit des formulations fille/garçon si un champ réel est ajouté ultérieurement.
+
+### Carte PDF officielle
+
+Source : `Gemini_Generated_Image_xi7rhdxi7rhdxi7r.jpeg`, commit utilisateur `5604296`.
+Le fond crème et or, l'emblème, les ballons, le cadre et les titres sont conservés.
+L'âge, le nom, les vœux et l'année sont remplacés par des textes vectoriels mesurés.
+Voir `src/assets/anniversaires/README.md` pour la provenance, les polices, la
+préparation reproductible et les dimensions (240 × 135,529 mm, environ 288 ppp).
+Les noms longs sont centrés sur plusieurs lignes, avec taille ajustée et sans
+troncature. Une donnée exceptionnellement démesurée est refusée plutôt que de
+produire une carte illisible. Le fond et jsPDF sont chargés au téléchargement,
+pas à l'ouverture de la liste. Le fond est réutilisé pour les exports suivants.
+
+### Déploiement et tests
+
+Appliquer **uniquement la nouvelle migration**
+`supabase/migrations/20260919230000_anniversaires.sql` par le circuit habituel
+Supabase, puis déployer le frontend. Elle ajoute une vue, un index et une fonction ;
+**aucune donnée ni table existante n'est supprimée ou réinitialisée**.
+Sans cette migration, la page affiche une erreur avec nouvelle tentative, et non
+un faux état « aucun anniversaire ».
+
+- `npm run verif:anniversaires` : dates, minuit au Bénin, année bissextile,
+  messages, noms de fichiers, provenance du template, six vrais PDF et limites
+  des zones. Les PDF de contrôle sont écrits dans `tmp/anniversaires/` (hors Git).
+- `npm run verif:db` : filtres SQL, mois suivant, état vide, droits rôle par rôle,
+  dates invalides et 29 février. Environnement PostgreSQL local PGlite uniquement.
+- `npm run verif:all` et la CI incluent ces vérifications. `npm run build` effectue
+  aussi le typage TypeScript ; le dépôt n'a pas de script lint distinct.
