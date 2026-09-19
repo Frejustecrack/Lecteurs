@@ -2,6 +2,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
   dateISO,
+  estAvantPremierSamediActif,
   fmtDate,
   fmtMoney,
   moisLabel,
@@ -286,6 +287,8 @@ export function exportCotisations(args: {
     let paye = 0;
     let du = 0;
     const cells = samedisIso.map((s) => {
+      // Samedi antérieur à l'entrée en vigueur du lecteur : Néant.
+      if (estAvantPremierSamediActif(s, l.created_at)) return 'Néant';
       const c = map.get(`${l.id}|${s}`);
       if (c?.paye) {
         paye += c.montant;
@@ -306,6 +309,19 @@ export function exportCotisations(args: {
     styles: { fontSize: 7.5, cellPadding: 1.3 },
     headStyles: { fillColor: BLEU_CDLJ, fontSize: 7.5, halign: 'center' },
     columnStyles: colonnesFicheMensuelle(doc, samedisIso.length, 18),
+    didParseCell: (data) => {
+      if (data.section !== 'body') return;
+      const idx = data.column.index;
+      if (idx < 3 || idx >= 3 + samedisIso.length) return;
+      if (String(data.cell.raw ?? '') === 'Néant') {
+        data.cell.styles.textColor = [148, 163, 184]; // slate-400 gris
+        data.cell.styles.fontStyle = 'italic';
+        data.cell.styles.fillColor = [248, 250, 252]; // slate-50
+      } else if (String(data.cell.raw ?? '') === 'Dû') {
+        data.cell.styles.textColor = [185, 28, 28]; // rouge
+        data.cell.styles.fontStyle = 'bold';
+      }
+    },
   });
   piedPage(doc);
   sauvegarderPdf(doc, `cdlj_cotisations_${annee}-${String(mois + 1).padStart(2, '0')}.pdf`);
@@ -345,6 +361,8 @@ export function exportPresences(args: {
     let pres = 0;
     let abs = 0;
     const cells = samedisIso.map((s) => {
+      // Samedi antérieur à l'entrée en vigueur du lecteur : Néant.
+      if (estAvantPremierSamediActif(s, l.created_at)) return 'Néant';
       const p = map.get(`${l.id}|${s}`);
       // Lisible sans légende : « Pres » présent, « Abs » absent.
       // À preuve du contraire : un samedi arrivé non pointé compte comme absent.
@@ -374,7 +392,11 @@ export function exportPresences(args: {
       const idx = data.column.index;
       if (idx < 3 || idx >= 3 + samedisIso.length) return;
       const v = String(data.cell.raw ?? '');
-      if (v === 'Pres') {
+      if (v === 'Néant') {
+        data.cell.styles.textColor = [148, 163, 184]; // slate-400 gris
+        data.cell.styles.fontStyle = 'italic';
+        data.cell.styles.fillColor = [248, 250, 252]; // slate-50
+      } else if (v === 'Pres') {
         data.cell.styles.textColor = [21, 128, 61]; // vert
         data.cell.styles.fontStyle = 'bold';
       } else if (v === 'Abs') {
@@ -587,10 +609,10 @@ export function exportFicheLecteur(args: {
   const rows: string[][] = [];
   for (let i = 11; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    // Seuls les samedis déjà arrivés sont comptabilisés.
+    // Seuls les samedis déjà arrivés ET postérieurs au premier samedi actif sont comptabilisés.
     const sam = samedisArrives(
       samedisDuMois(d.getFullYear(), d.getMonth()).map(dateISO)
-    );
+    ).filter((s) => !estAvantPremierSamediActif(s, l.created_at));
     const p = presences.filter((x) => sam.includes(x.date_samedi));
     const pres = p.filter((x) => x.statut === 'present').length;
     // À preuve du contraire : un samedi arrivé non pointé compte comme absent.
@@ -616,12 +638,13 @@ export function exportFicheLecteur(args: {
   const rowsC: string[][] = [];
   for (let i = 11; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    // Seuls les samedis arrivés ET postérieurs au premier samedi actif génèrent une obligation.
     const sam = samedisArrives(
       samedisDuMois(d.getFullYear(), d.getMonth()).map(dateISO)
-    );
+    ).filter((s) => !estAvantPremierSamediActif(s, l.created_at));
     const c = cotisations.filter((x) => sam.includes(x.date_samedi));
     const paye = c.filter((x) => x.paye).reduce((s, x) => s + x.montant, 0);
-    // Les samedis à venir ne génèrent aucune dette.
+    // Les samedis à venir ou antérieurs à l'entrée en vigueur ne génèrent aucune dette.
     const du = Math.max(sam.length - c.filter((x) => x.paye).length, 0) * montantCot;
     rowsC.push([
       d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }),

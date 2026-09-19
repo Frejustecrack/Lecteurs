@@ -7,6 +7,7 @@ import {
   aujourdhuiBenin,
   dateISO,
   deplaceMois,
+  estAvantPremierSamediActif,
   fmtDate,
   fmtDateHeure,
   fmtMoney,
@@ -254,11 +255,14 @@ export default function LecteurProfil() {
 
   // ---- récap annuel (12 derniers mois) - optimisé pour 200 lecteurs
   const recapAnnuel = useMemo(() => {
+    if (!l) return [];
     const rows: { label: string; present: number; absent: number; nonSaisi: number }[] = [];
     const ref = new Date();
     for (let i = 11; i >= 0; i--) {
       const d = new Date(ref.getFullYear(), ref.getMonth() - i, 1);
-      const sam = samedisDuMois(d.getFullYear(), d.getMonth()).map(dateISO);
+      const sam = samedisDuMois(d.getFullYear(), d.getMonth())
+        .map(dateISO)
+        .filter((s) => !estAvantPremierSamediActif(s, l.created_at));
       const pres = presences.filter((p) => sam.includes(p.date_samedi));
       rows.push({
         label: d.toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }),
@@ -268,7 +272,7 @@ export default function LecteurProfil() {
       });
     }
     return rows;
-  }, [presences]);
+  }, [presences, l]);
 
   if (loading || !l) return <Spinner label="Chargement de la fiche…" />;
 
@@ -712,25 +716,28 @@ export default function LecteurProfil() {
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {samedisP.map((d) => {
-                const st = presMoisP.get(d);
+                const neant = l ? estAvantPremierSamediActif(d, l.created_at) : false;
+                const st = !neant ? presMoisP.get(d) : undefined;
                 const arrive = samediEstArrive(d);
-                const absent = st === 'absent' || (!st && arrive);
+                const absent = !neant && (st === 'absent' || (!st && arrive));
                 return (
                   <div
                     key={d}
                     className={`rounded-lg border px-3 py-2 text-center text-xs font-semibold ${
-                      st === 'present'
-                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                        : absent
-                          ? 'border-red-200 bg-red-50 text-alerte'
-                          : 'border-slate-200 bg-slate-50 text-slate-400'
+                      neant
+                        ? 'border-slate-200 bg-slate-100 text-slate-400 font-normal italic'
+                        : st === 'present'
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                          : absent
+                            ? 'border-red-200 bg-red-50 text-alerte'
+                            : 'border-slate-200 bg-slate-50 text-slate-400'
                     }`}
                   >
                     <div>Samedi {fmtDate(d).slice(0, 5)}</div>
-                    <div className="text-lg">
-                      {st === 'present' ? '✓' : absent ? '✗' : '—'}
+                    <div className={neant ? 'text-xs italic py-1' : 'text-lg'}>
+                      {neant ? 'Néant' : st === 'present' ? '✓' : absent ? '✗' : '—'}
                     </div>
-                    {!st && !arrive && (
+                    {!neant && !st && !arrive && (
                       <div className="text-[10px] font-medium">à venir</div>
                     )}
                   </div>
@@ -771,22 +778,25 @@ export default function LecteurProfil() {
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {samedisC.map((d) => {
-                const m = cotMoisC.get(d);
-                const du = !m && samediEstArrive(d);
+                const neant = l ? estAvantPremierSamediActif(d, l.created_at) : false;
+                const m = !neant ? cotMoisC.get(d) : undefined;
+                const du = !neant && !m && samediEstArrive(d);
                 return (
                   <div
                     key={d}
                     className={`rounded-lg border px-3 py-2 text-center text-xs font-semibold ${
-                      m
-                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                        : du
-                          ? 'border-red-200 bg-red-50 text-alerte'
-                          : 'border-slate-200 bg-slate-50 text-slate-400'
+                      neant
+                        ? 'border-slate-200 bg-slate-100 text-slate-400 font-normal italic'
+                        : m
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                          : du
+                            ? 'border-red-200 bg-red-50 text-alerte'
+                            : 'border-slate-200 bg-slate-50 text-slate-400'
                     }`}
                   >
                     <div>Samedi {fmtDate(d).slice(0, 5)}</div>
-                    <div className="text-sm">
-                      {m ? `${m} F ✓` : du ? 'dû' : '—'}
+                    <div className={neant ? 'text-xs italic py-1' : 'text-sm'}>
+                      {neant ? 'Néant' : m ? `${m} F ✓` : du ? 'dû' : '—'}
                     </div>
                   </div>
                 );
@@ -801,8 +811,8 @@ export default function LecteurProfil() {
               <span className="font-bold text-alerte">
                 {fmtMoney(
                   samedisC
-                    .filter((d) => !cotMoisC.get(d) && samediEstArrive(d))
-                    .reduce((s) => s + montantCot, 0)
+                    .filter((d) => !estAvantPremierSamediActif(d, l?.created_at) && !cotMoisC.get(d) && samediEstArrive(d))
+                    .reduce((s) => s + 50, 0)
                 )}
               </span>
             </div>
