@@ -32,6 +32,11 @@ jobs:
       - name: Base — migrations, RLS, triggers
         run: npm run verif:db
 
+      # Scénario complet dans un vrai PostgreSQL : désignation → cotisation
+      # → caisse → mutation → changement de tarif. Verrouille le 100 F.
+      - name: Parcours réel — cotisation Animateur à 100 F
+        run: npm run verif:parcours
+
       - name: Exports PDF (portrait, Pres/Abs, 200 lecteurs)
         run: npm run verif:pdf
 
