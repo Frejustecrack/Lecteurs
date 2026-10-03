@@ -98,15 +98,35 @@ export function appliquerFiltreRecap(recaps: Recap[], filtre: FiltreRecap): Reca
   return recaps.filter((r) => filtreRecap(r, filtre));
 }
 
-/** Filtre par fraternité et par recherche texte (matricule, nom, prénom). */
+/**
+ * Filtre par fraternité et par recherche texte (matricule, nom, prénom).
+ *
+ * `animateurFraterniteId` applique la même règle que les écrans Présences et
+ * Cotisations : en vue globale les animateurs sont exclus, et ils ne
+ * réapparaissent qu'en sélectionnant explicitement leur fraternité. Le suivi
+ * d'assiduité dérive des présences — il doit décrire exactement la même
+ * population, sinon deux écrans affichent deux effectifs différents.
+ */
 export function filtrerRecaps(
   recaps: Recap[],
-  opts: { fraterniteId?: string; recherche?: string; filtre?: FiltreRecap }
+  opts: {
+    fraterniteId?: string;
+    recherche?: string;
+    filtre?: FiltreRecap;
+    animateurFraterniteId?: string | null;
+  }
 ): Recap[] {
   const q = (opts.recherche ?? '').trim().toLowerCase();
   const f = opts.filtre ?? 'tous';
   return recaps.filter((r) => {
-    if (opts.fraterniteId && r.lecteur.fraternite_id !== opts.fraterniteId) return false;
+    if (opts.fraterniteId) {
+      if (r.lecteur.fraternite_id !== opts.fraterniteId) return false;
+    } else if (
+      opts.animateurFraterniteId &&
+      r.lecteur.fraternite_id === opts.animateurFraterniteId
+    ) {
+      return false;
+    }
     if (q) {
       const ok =
         r.lecteur.matricule.toLowerCase().includes(q) ||

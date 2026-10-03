@@ -40,6 +40,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [kpi, setKpi] = useState({
     actifs: 0,
+    animateurs: 0,
     tauxPresence: 0,
     presenceMoyenne: 0,
     tauxCotisation: 0,
@@ -93,8 +94,17 @@ export default function Dashboard() {
           .limit(6),
       ]);
 
-    const compteurs = (rCompteurs.data ?? { actifs: 0 }) as { actifs: number };
-    const actifs = Number(compteurs.actifs);
+    const compteurs = (rCompteurs.data ?? { actifs: 0 }) as {
+      actifs: number;
+      animateurs?: number;
+      actifs_hors_animateurs?: number;
+    };
+    // Le tableau de bord doit annoncer le MÊME effectif que les vues globales
+    // de Présences / Cotisations / Suivis, qui excluent les animateurs. Les
+    // champs sont optionnels pour rester compatible avec une base dont la
+    // migration 20261004090000 n'est pas encore appliquée.
+    const animateurs = Number(compteurs.animateurs ?? 0);
+    const actifs = Number(compteurs.actifs_hors_animateurs ?? compteurs.actifs);
     const presParMois = new Map(
       ((rPresMois.data ?? []) as { mois: string; presents: number; absents: number; samedis_eligibles?: number }[]).map((r) => [r.mois, r])
     );
@@ -140,6 +150,7 @@ export default function Dashboard() {
 
     setKpi({
       actifs,
+      animateurs,
       tauxPresence: pct(nbPresent, samedisEligibles),
       presenceMoyenne:
         samedis.length > 0 ? Math.round((nbPresent / samedis.length) * 10) / 10 : 0,
@@ -193,7 +204,15 @@ export default function Dashboard() {
       />
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <StatCard label="Lecteurs actifs" value={kpi.actifs} />
+        <StatCard
+          label="Lecteurs actifs"
+          value={kpi.actifs}
+          sub={
+            kpi.animateurs > 0
+              ? `hors ${kpi.animateurs} animateur(s)`
+              : undefined
+          }
+        />
         <StatCard
           label="Taux de présence"
           value={kpi.tauxPresence + ' %'}

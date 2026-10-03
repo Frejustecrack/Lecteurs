@@ -402,6 +402,46 @@ eq(
   filtrerRecaps(recaps, { fraterniteId: 'fr2', filtre: 'absents' }).length,
   1
 );
+
+// Suivis doit décrire EXACTEMENT la même population que Présences : les
+// animateurs sortent de la vue globale et reviennent via leur fraternité.
+// Ici fr2 joue le rôle de la fraternité des animateurs (Jean en est membre).
+eq(
+  'Suivis — vue globale : les animateurs sont exclus',
+  filtrerRecaps(recaps, { animateurFraterniteId: 'fr2' }).length,
+  2
+);
+eq(
+  'Suivis — vue globale : aucun animateur ne subsiste',
+  filtrerRecaps(recaps, { animateurFraterniteId: 'fr2' })
+    .filter((r) => r.lecteur.fraternite_id === 'fr2').length,
+  0
+);
+eq(
+  'Suivis — filtre Animateur : eux seuls apparaissent',
+  filtrerRecaps(recaps, { fraterniteId: 'fr2', animateurFraterniteId: 'fr2' }).length,
+  1
+);
+eq(
+  'Suivis — une fraternité ordinaire reste intacte',
+  filtrerRecaps(recaps, { fraterniteId: 'fr1', animateurFraterniteId: 'fr2' }).length,
+  2
+);
+eq(
+  'Suivis — sans désignation, la vue globale reste exhaustive',
+  filtrerRecaps(recaps, { animateurFraterniteId: null }).length,
+  3
+);
+eq(
+  'Suivis — l’exclusion se cumule avec le filtre d’assiduité',
+  filtrerRecaps(recaps, { filtre: 'absents', animateurFraterniteId: 'fr2' }).length,
+  1
+);
+eq(
+  'Suivis — l’exclusion se cumule avec la recherche',
+  filtrerRecaps(recaps, { recherche: 'Jean', animateurFraterniteId: 'fr2' }).length,
+  0
+);
 eq(
   'aucun lecteur sans absence effective n’apparaît dans « absents »',
   appliquerFiltreRecap(recaps, 'absents').some((r) => absencesEffectives(r) === 0),

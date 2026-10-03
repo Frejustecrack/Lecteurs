@@ -6,6 +6,11 @@ import { toutesLesLignes } from '../lib/pagination';
 import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import { useDebounce } from '../lib/useDebounce';
+import {
+  idFraterniteAnimateur,
+  libelleVueGlobale,
+  vueAnimateurs,
+} from '../lib/fraternites';
 import { traduireErreur } from '../lib/errors';
 import { journaliserExport } from '../lib/journal';
 import {
@@ -137,7 +142,7 @@ export default function Suivis() {
           .order('nom').order('prenom').order('matricule')
           .range(de, a)
       ),
-      supabase.from('fraternites').select('id, nom').order('nom'),
+      supabase.from('fraternites').select('id, nom, system_key').order('nom'),
     ]);
     setLecteurs(trierLecteurs((rL.data ?? []) as Lecteur[]));
     setFraternites((rF.data ?? []) as Fraternite[]);
@@ -181,9 +186,38 @@ export default function Suivis() {
     [lecteurs, presences, samedisComptes]
   );
 
+  const animateurId = idFraterniteAnimateur(fraternites);
+  const estVueAnimateurs = vueAnimateurs(fId, animateurId);
+
   const filtres = useMemo(
-    () => filtrerRecaps(recaps, { fraterniteId: fId, recherche: debouncedSearch, filtre }),
-    [recaps, fId, debouncedSearch, filtre]
+    () =>
+      filtrerRecaps(recaps, {
+        fraterniteId: fId,
+        recherche: debouncedSearch,
+        filtre,
+        animateurFraterniteId: animateurId,
+      }),
+    [recaps, fId, debouncedSearch, filtre, animateurId]
+  );
+
+  /**
+   * Base des compteurs affichés sur les pastilles de filtre : même périmètre
+   * (fraternité + recherche) que le tableau, filtre d'assiduité exclu.
+   *
+   * Auparavant les pastilles comptaient `recaps` BRUT : elles annonçaient donc
+   * des effectifs qui ne correspondaient ni à la fraternité choisie, ni à la
+   * recherche en cours. Avec l'exclusion des animateurs, l'écart devenait
+   * visible à l'écran — deux nombres contradictoires sur la même page.
+   */
+  const perimetre = useMemo(
+    () =>
+      filtrerRecaps(recaps, {
+        fraterniteId: fId,
+        recherche: debouncedSearch,
+        filtre: 'tous',
+        animateurFraterniteId: animateurId,
+      }),
+    [recaps, fId, debouncedSearch, animateurId]
   );
 
   const tries = useMemo(() => [...filtres].sort((a, b) => comparerLecteurs(a.lecteur, b.lecteur)), [filtres]);
@@ -260,7 +294,11 @@ export default function Suivis() {
     try {
       const morceaux = [
         filtre !== 'tous' ? FILTRES.find((f) => f.value === filtre)?.label : null,
-        fId ? `Fraternité : ${fraterniteNom(fId) ?? '—'}` : null,
+        fId
+          ? `Fraternité : ${fraterniteNom(fId) ?? '—'}`
+          : animateurId
+            ? 'Hors animateurs'
+            : null,
         search.trim() ? `Recherche : « ${search.trim()} »` : null,
         samediChoisi ? `Samedi ${fmtDate(samediChoisi)}` : null,
       ].filter(Boolean);
@@ -387,7 +425,7 @@ export default function Suivis() {
         <div className="flex flex-wrap gap-2">
           {FILTRES.map((f) => {
             const actif = filtre === f.value;
-            const compte = appliquerFiltreRecap(recaps, f.value).length;
+            const compte = appliquerFiltreRecap(perimetre, f.value).length;
             return (
               <button
                 key={f.value}
@@ -419,13 +457,18 @@ export default function Suivis() {
             aria-label="Filtrer par fraternité"
             className={`${inputCls} w-full sm:w-auto`}
           >
-            <option value="">Toutes les fraternités</option>
+            <option value="">{libelleVueGlobale(animateurId)}</option>
             {fraternites.map((f) => (
               <option key={f.id} value={f.id}>
                 {f.nom}
               </option>
             ))}
           </select>
+          {estVueAnimateurs && (
+            <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+              Vue animateurs
+            </span>
+          )}
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
