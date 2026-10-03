@@ -145,9 +145,9 @@ export default function Presences() {
   const animateurId = idFraterniteAnimateur(fraternites);
   const estVueAnimateurs = vueAnimateurs(fId, animateurId);
 
-  // Les animateurs encadrent, ils ne sont pas suivis avec les lecteurs : la
-  // vue globale les exclut pour ne pas fausser l'effectif et le taux de
-  // présence. Ils réapparaissent en sélectionnant leur fraternité.
+  // Les animateurs sortent de la vue globale pour alléger la liste à pointer.
+  // C'est un confort de LECTURE : cette page n'affiche aucun total, il n'y a
+  // donc rien à recompter. Ils réapparaissent en sélectionnant leur fraternité.
   const filtered = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
     return filtrerParFraternite(lecteurs, fId, animateurId).filter((l) => {

@@ -78,3 +78,43 @@ export function libelleVueGlobale(animateurId: string | null): string {
     ? 'Vue globale — toutes les fraternités sauf les animateurs'
     : 'Vue globale — toutes les fraternités';
 }
+
+/**
+ * Périmètre **comptable** d'une vue — les animateurs y sont TOUJOURS inclus.
+ *
+ * L'exclusion opérée par `filtrerParFraternite` est purement **visuelle** :
+ * elle allège la liste des lecteurs à pointer. Les totaux affichés, eux,
+ * doivent décrire la communauté entière, sinon le total payé d'un écran ne
+ * correspond plus à l'argent réellement encaissé et la caisse ne tombe plus
+ * juste.
+ *
+ * Règle : **ce qu'on affiche** se filtre, **ce qu'on compte** ne se filtre pas.
+ *
+ * @param fraterniteId `''` = vue globale (toute la communauté) ; sinon les
+ *                     membres de la fraternité choisie.
+ */
+export function filtrerPourTotaux<T extends LecteurFiltrable>(
+  lecteurs: readonly T[],
+  fraterniteId: string
+): T[] {
+  if (!fraterniteId) return [...lecteurs];
+  return lecteurs.filter((l) => l.fraternite_id === fraterniteId);
+}
+
+/** Nombre d'animateurs dans un ensemble — sert à expliciter un total. */
+export function compterAnimateurs<T extends LecteurFiltrable>(
+  lecteurs: readonly T[],
+  animateurId: string | null
+): number {
+  if (!animateurId) return 0;
+  return lecteurs.filter((l) => l.fraternite_id === animateurId).length;
+}
+
+/**
+ * Mention à accoler à un total pour que son périmètre soit lisible.
+ * Renvoie `undefined` quand il n'y a rien à signaler.
+ */
+export function mentionAnimateurs(nb: number): string | undefined {
+  if (nb <= 0) return undefined;
+  return `animateurs inclus (${nb})`;
+}

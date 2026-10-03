@@ -49,9 +49,12 @@ import {
   type Role,
 } from '../src/lib/types.ts';
 import {
+  compterAnimateurs,
   filtrerParFraternite,
+  filtrerPourTotaux,
   idFraterniteAnimateur,
   libelleVueGlobale,
+  mentionAnimateurs,
   vueAnimateurs,
 } from '../src/lib/fraternites.ts';
 import { creerPlanificateur } from '../src/lib/planificateur.ts';
@@ -807,6 +810,44 @@ console.log('\n── Temps réel : regroupement et non-superposition des rechar
     'le libellé global reste neutre sans désignation',
     libelleVueGlobale(null) === 'Vue globale — toutes les fraternités'
   );
+
+  // ----------------------------------------------------------------------
+  // Règle structurante : ce qu'on AFFICHE se filtre, ce qu'on COMPTE non.
+  // Le retrait des animateurs de la vue globale est un confort de lecture ;
+  // amputer les totaux ferait diverger l'écran et la caisse.
+  // ----------------------------------------------------------------------
+  const comptes = filtrerPourTotaux(peuple, '');
+  verif('périmètre comptable global : personne n’est retiré', comptes.length === 5);
+  verif(
+    'périmètre comptable global : les animateurs en font partie',
+    comptes.filter((l) => l.fraternite_id === 'f-anim').length === 2
+  );
+  verif(
+    'affiché (3) et compté (5) diffèrent bien en vue globale',
+    filtrerParFraternite(peuple, '', animateurId).length === 3 && comptes.length === 5
+  );
+  verif(
+    'sur une fraternité choisie, affiché et compté coïncident',
+    filtrerPourTotaux(peuple, 'f-jean').length ===
+      filtrerParFraternite(peuple, 'f-jean', animateurId).length
+  );
+  verif(
+    'sur la fraternité des animateurs aussi',
+    filtrerPourTotaux(peuple, 'f-anim').length === 2 &&
+      filtrerParFraternite(peuple, 'f-anim', animateurId).length === 2
+  );
+  verif('le périmètre comptable ne modifie pas la source', peuple.length === 5);
+
+  verif('compterAnimateurs compte la part animateurs', compterAnimateurs(comptes, animateurId) === 2);
+  verif('compterAnimateurs vaut 0 sans désignation', compterAnimateurs(comptes, null) === 0);
+  verif(
+    'compterAnimateurs vaut 0 sur une fraternité ordinaire',
+    compterAnimateurs(filtrerPourTotaux(peuple, 'f-jean'), animateurId) === 0
+  );
+
+  verif('la mention explicite le périmètre du total', mentionAnimateurs(2) === 'animateurs inclus (2)');
+  verif('aucune mention quand il n’y a pas d’animateur', mentionAnimateurs(0) === undefined);
+  verif('aucune mention sur un compte négatif', mentionAnimateurs(-1) === undefined);
 }
 
 // ============================================================================

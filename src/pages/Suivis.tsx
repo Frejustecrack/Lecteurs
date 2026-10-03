@@ -9,6 +9,7 @@ import { useDebounce } from '../lib/useDebounce';
 import {
   idFraterniteAnimateur,
   libelleVueGlobale,
+  mentionAnimateurs,
   vueAnimateurs,
 } from '../lib/fraternites';
 import { traduireErreur } from '../lib/errors';
@@ -201,6 +202,26 @@ export default function Suivis() {
   );
 
   /**
+   * COMPTABILITÉ — périmètre des cartes de statistiques : les animateurs y
+   * sont TOUJOURS comptés. Leur retrait de la vue globale est un confort de
+   * lecture ; les indicateurs, eux, doivent décrire la communauté entière.
+   */
+  const comptabilises = useMemo(
+    () =>
+      filtrerRecaps(recaps, {
+        fraterniteId: fId,
+        recherche: debouncedSearch,
+        filtre,
+      }),
+    [recaps, fId, debouncedSearch, filtre]
+  );
+
+  const nbAnimateursComptes = animateurId
+    ? comptabilises.filter((r) => r.lecteur.fraternite_id === animateurId).length
+    : 0;
+  const mentionAnim = mentionAnimateurs(nbAnimateursComptes);
+
+  /**
    * Base des compteurs affichés sur les pastilles de filtre : même périmètre
    * (fraternité + recherche) que le tableau, filtre d'assiduité exclu.
    *
@@ -224,17 +245,19 @@ export default function Suivis() {
 
   // ---------------------------------------------------------------- indicateurs
   const nbSeances = samedisComptes.length;
-  const nbAssidus = filtres.filter((r) => r.total > 0 && r.present === r.total).length;
-  const nbAbsents = filtres.filter((r) => absencesEffectives(r) > 0).length;
+  const nbAssidus = comptabilises.filter((r) => r.total > 0 && r.present === r.total).length;
+  const nbAbsents = comptabilises.filter((r) => absencesEffectives(r) > 0).length;
   const moyennePresents =
     nbSeances > 0
       ? Math.round(
-          (filtres.reduce((s, r) => s + r.present, 0) / nbSeances) * 10
+          (comptabilises.reduce((s, r) => s + r.present, 0) / nbSeances) * 10
         ) / 10
       : 0;
   const tauxGlobal =
-    filtres.length > 0
-      ? Math.round(filtres.reduce((s, r) => s + r.taux, 0) / filtres.length)
+    comptabilises.length > 0
+      ? Math.round(
+          comptabilises.reduce((s, r) => s + r.taux, 0) / comptabilises.length
+        )
       : 0;
 
   // ---------------------------------------------------------------- navigation
@@ -410,13 +433,13 @@ export default function Suivis() {
           label="Présents en moyenne"
           value={moyennePresents}
           tone="green"
-          sub={`taux moyen ${tauxGlobal} %`}
+          sub={`taux moyen ${tauxGlobal} %${mentionAnim ? ` — ${mentionAnim}` : ''}`}
         />
         <StatCard
           label="Assidus / absents"
           value={`${nbAssidus} / ${nbAbsents}`}
           tone={nbAbsents > 0 ? 'red' : 'green'}
-          sub="100 % de présence / ≥ 1 absence"
+          sub={`100 % de présence / ≥ 1 absence${mentionAnim ? ` — ${mentionAnim}` : ''}`}
         />
       </div>
 

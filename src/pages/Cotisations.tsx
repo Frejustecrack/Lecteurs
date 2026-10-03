@@ -23,9 +23,12 @@ import {
 } from '../lib/dates';
 import { useDebounce } from '../lib/useDebounce';
 import {
+  compterAnimateurs,
   filtrerParFraternite,
+  filtrerPourTotaux,
   idFraterniteAnimateur,
   libelleVueGlobale,
+  mentionAnimateurs,
   vueAnimateurs,
 } from '../lib/fraternites';
 import { montantParametre } from '../lib/validation';
@@ -171,20 +174,40 @@ export default function Cotisations() {
     [animateurId, montantAnimateur, montantCot]
   );
 
-  // Les animateurs sont exclus de la vue globale : tarif distinct et rôle
-  // distinct, les mélanger fausserait l'effectif et le total dû affichés.
-  // Ils réapparaissent dès que leur fraternité est choisie dans le filtre.
-  const filtered = useMemo(() => {
-    const q = debouncedSearch.trim().toLowerCase();
-    return filtrerParFraternite(lecteurs, fId, animateurId).filter((l) => {
+  const correspondRecherche = useCallback(
+    (l: Lecteur) => {
+      const q = debouncedSearch.trim().toLowerCase();
       if (!q) return true;
       return (
         l.matricule.toLowerCase().includes(q) ||
         l.nom.toLowerCase().includes(q) ||
         l.prenom.toLowerCase().includes(q)
       );
-    });
-  }, [lecteurs, fId, animateurId, debouncedSearch]);
+    },
+    [debouncedSearch]
+  );
+
+  /**
+   * AFFICHAGE — les animateurs sortent de la vue globale pour alléger la
+   * liste à pointer. C'est un confort de lecture, rien de plus.
+   */
+  const filtered = useMemo(
+    () => filtrerParFraternite(lecteurs, fId, animateurId).filter(correspondRecherche),
+    [lecteurs, fId, animateurId, correspondRecherche]
+  );
+
+  /**
+   * COMPTABILITÉ — les animateurs sont TOUJOURS comptés. Les cartes de
+   * statistiques doivent correspondre à l'argent réellement encaissé et dû,
+   * faute de quoi le total de l'écran ne tombe plus juste avec la caisse.
+   */
+  const comptabilises = useMemo(
+    () => filtrerPourTotaux(lecteurs, fId).filter(correspondRecherche),
+    [lecteurs, fId, correspondRecherche]
+  );
+
+  const nbAnimateursComptes = compterAnimateurs(comptabilises, animateurId);
+  const mentionAnim = mentionAnimateurs(nbAnimateursComptes);
 
   async function toggle(l: Lecteur, sam: string) {
     if (estAvantPremierSamediActif(sam, l.created_at)) {
@@ -260,7 +283,7 @@ export default function Cotisations() {
 
   // --------------------------------------------------------------- totaux
   /** Total payé sur la vue — même filtre que les colonnes de chaque ligne : les samedis antérieurs au premier samedi actif ne comptent jamais. */
-  const totalPaye = filtered.reduce(
+  const totalPaye = comptabilises.reduce(
     (s, l) =>
       s +
       samedis
@@ -273,7 +296,7 @@ export default function Cotisations() {
     0
   );
   /** Samedis arrivés et non réglés à partir du premier samedi actif — les samedis antérieurs ou à venir ne comptent pas. */
-  const { nbDu, totalDu } = filtered.reduce(
+  const { nbDu, totalDu } = comptabilises.reduce(
     (totaux, l) => {
       const nombre = samedisArrivesListe.filter(
         (sam) => !estAvantPremierSamediActif(sam, l.created_at) && !map.get(`${l.id}|${sam}`)?.paye
@@ -400,13 +423,13 @@ export default function Cotisations() {
           label="Total payé (vue)"
           value={fmtMoney(totalPaye)}
           tone="green"
-          sub={periodeLabel}
+          sub={mentionAnim ? `${periodeLabel} — ${mentionAnim}` : periodeLabel}
         />
         <StatCard
           label="Cotisations dues (vue)"
           value={fmtMoney(totalDu)}
           tone="red"
-          sub={`${nbDu} samedi(s) actif(s) non réglé(s)`}
+          sub={`${nbDu} samedi(s) actif(s) non réglé(s)${mentionAnim ? ` — ${mentionAnim}` : ''}`}
         />
         <StatCard
           label="Samedis comptés"
@@ -415,9 +438,15 @@ export default function Cotisations() {
         />
         <StatCard
           label="Lecteurs (vue)"
-          value={filtered.length}
+          value={comptabilises.length}
           tone="amber"
-          sub={isCaissier ? 'clic sur une case = payé/dû' : 'lecture seule'}
+          sub={
+            nbAnimateursComptes > 0
+              ? `dont ${nbAnimateursComptes} animateur(s) — ${filtered.length} affiché(s)`
+              : isCaissier
+                ? 'clic sur une case = payé/dû'
+                : 'lecture seule'
+          }
         />
       </div>
 

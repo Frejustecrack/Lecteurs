@@ -99,12 +99,16 @@ export default function Dashboard() {
       animateurs?: number;
       actifs_hors_animateurs?: number;
     };
-    // Le tableau de bord doit annoncer le MÊME effectif que les vues globales
-    // de Présences / Cotisations / Suivis, qui excluent les animateurs. Les
-    // champs sont optionnels pour rester compatible avec une base dont la
-    // migration 20261004090000 n'est pas encore appliquée.
+    // Le tableau de bord ne montre que des TOTAUX : il compte donc toute la
+    // communauté, animateurs compris. Le retrait des animateurs des vues
+    // globales de Présences / Cotisations / Suivis est un confort de lecture
+    // des listes, pas une règle comptable — un total amputé ne tomberait plus
+    // juste avec la caisse.
+    //
+    // `animateurs` reste optionnel : une base où la migration 20261004090000
+    // n'est pas encore appliquée affiche simplement l'effectif sans mention.
     const animateurs = Number(compteurs.animateurs ?? 0);
-    const actifs = Number(compteurs.actifs_hors_animateurs ?? compteurs.actifs);
+    const actifs = Number(compteurs.actifs);
     const presParMois = new Map(
       ((rPresMois.data ?? []) as { mois: string; presents: number; absents: number; samedis_eligibles?: number }[]).map((r) => [r.mois, r])
     );
@@ -209,7 +213,7 @@ export default function Dashboard() {
           value={kpi.actifs}
           sub={
             kpi.animateurs > 0
-              ? `hors ${kpi.animateurs} animateur(s)`
+              ? `dont ${kpi.animateurs} animateur(s)`
               : undefined
           }
         />
