@@ -245,6 +245,109 @@ await attendLignes('Admin modifie indépendamment le tarif Animateur', 'admin',
 await enAdminSql(`update public.app_settings set value='100' where key='montant_cotisation_animateur'`);
 await enAdminSql(`delete from public.cotisations where lecteur_id=$1 and date_samedi=public.dernier_samedi()`, [l1.id]);
 
+// ---------------------------------------------------------------------------
+// Désignation de la fraternité au tarif Animateur (migration 20261003234500).
+//
+// Reproduit le cas rencontré en production : la communauté utilise sa propre
+// fraternité d'animateurs (ici frat2) et pas celle créée par le système. Avant
+// ce correctif, ses membres étaient facturés 50 F sans aucun moyen de réparer
+// depuis l'interface.
+// ---------------------------------------------------------------------------
+{
+  const animateurSysteme = (await enAdminSql(`select id from public.fraternites where system_key='animateur'`))[0];
+
+  // l1 est dans frat2, une fraternité ORDINAIRE : tarif normal.
+  await attendOk('cotisation payée dans une fraternité ordinaire', 'caissier',
+    `insert into public.cotisations (lecteur_id, date_samedi, paye) values ($1, public.dernier_samedi(), true) returning id`, [l1.id]);
+  let m = await enAdminSql(`select montant from public.cotisations where lecteur_id=$1 and date_samedi=public.dernier_samedi()`, [l1.id]);
+  if (m[0]?.montant === 50) ok('avant désignation : les animateurs « maison » sont à 50 F (bug reproduit)');
+  else ko('avant désignation : tarif 50 F', JSON.stringify(m[0]));
+
+  // Seul l'Admin peut déplacer le marqueur.
+  for (const role of ['co', 'co_paroissial', 'caissier', 'responsable']) {
+    await attendRefus(`${role} ne peut pas désigner la fraternité Animateur`, role,
+      `select public.definir_fraternite_animateur($1)`, [frat2]);
+  }
+
+  // Le marqueur reste impossible à poser par un UPDATE direct.
+  await attendRefus('Admin ne pose pas system_key par UPDATE direct', 'admin',
+    `update public.fraternites set system_key='animateur' where id=$1 returning id`, [frat2]);
+
+  await attendOk('Admin désigne la fraternité au tarif Animateur', 'admin',
+    `select public.definir_fraternite_animateur($1)`, [frat2]);
+
+  const marqueurs = await enAdminSql(`select id from public.fraternites where system_key='animateur'`);
+  if (marqueurs.length === 1 && marqueurs[0].id === frat2) ok('le marqueur a été DÉPLACÉ (jamais dupliqué)');
+  else ko('le marqueur a été déplacé', JSON.stringify(marqueurs));
+
+  m = await enAdminSql(`select montant from public.cotisations where lecteur_id=$1 and date_samedi=public.dernier_samedi()`, [l1.id]);
+  if (m[0]?.montant === 100) ok('désignation : historique déjà payé recalculé à 100 F');
+  else ko('désignation : historique recalculé à 100 F', JSON.stringify(m[0]));
+
+  // Le drapeau de session ne doit pas survivre à la transaction du RPC.
+  await attendRefus('après désignation, UPDATE direct de system_key toujours refusé', 'admin',
+    `update public.fraternites set system_key=null where id=$1 returning id`, [frat2]);
+
+  // La règle « Animateur réservé au CO paroissial » suit la NOUVELLE fraternité.
+  await attendRefus('CO ne peut pas retirer un membre de la nouvelle fraternité Animateur', 'co',
+    `select public.changer_fraternite($1, null)`, [l1.id]);
+
+  // Un nouveau paiement applique le tarif spécial.
+  await attendOk('Caissier paie un second samedi', 'caissier',
+    `insert into public.cotisations (lecteur_id, date_samedi, paye) values ($1, public.dernier_samedi() - 7, true) returning id`, [l1.id]);
+  m = await enAdminSql(`select montant from public.cotisations where lecteur_id=$1 and date_samedi=public.dernier_samedi() - 7`, [l1.id]);
+  if (m[0]?.montant === 100) ok('nouveau paiement au tarif spécial : 100 F');
+  else ko('nouveau paiement au tarif spécial', JSON.stringify(m[0]));
+
+  // Retour à l'état initial : le marqueur revient sur la fraternité système.
+  await attendOk('Admin rend le marqueur à la fraternité système', 'admin',
+    `select public.definir_fraternite_animateur($1)`, [animateurSysteme.id]);
+  m = await enAdminSql(`select montant from public.cotisations where lecteur_id=$1 and date_samedi=public.dernier_samedi()`, [l1.id]);
+  if (m[0]?.montant === 50) ok('retrait de la désignation : historique ramené à 50 F');
+  else ko('retrait de la désignation : historique ramené à 50 F', JSON.stringify(m[0]));
+
+  // Appel sans effet : ne doit ni échouer ni journaliser.
+  await attendOk('redésigner la même fraternité est sans effet', 'admin',
+    `select public.definir_fraternite_animateur($1)`, [animateurSysteme.id]);
+
+  await enAdminSql(`delete from public.cotisations where lecteur_id=$1`, [l1.id]);
+}
+
+// ---------------------------------------------------------------------------
+// Compteurs d'effectif : le tableau de bord doit annoncer le même nombre que
+// les vues globales Présences / Cotisations / Suivis (migration 20261004090000).
+// ---------------------------------------------------------------------------
+{
+  const anim = (await enAdminSql(`select id from public.fraternites where system_key='animateur'`))[0];
+  const avant = (await enAdminSql(`select actifs, animateurs, actifs_hors_animateurs from public.v_lecteurs_compteurs`))[0];
+  if (avant.animateurs === 0 && avant.actifs_hors_animateurs === avant.actifs)
+    ok('sans animateur, effectif global et effectif hors animateurs coïncident');
+  else ko('sans animateur, les deux effectifs coïncident', JSON.stringify(avant));
+
+  await attendOk('CO paroissial place un lecteur chez les animateurs', 'co_paroissial',
+    `select public.changer_fraternite($1, $2)`, [l1.id, anim.id]);
+  const apres = (await enAdminSql(`select actifs, animateurs, actifs_hors_animateurs from public.v_lecteurs_compteurs`))[0];
+  if (apres.animateurs === 1) ok('les animateurs sont comptés à part');
+  else ko('les animateurs sont comptés à part', JSON.stringify(apres));
+  if (apres.actifs === avant.actifs) ok('l’effectif total reste inchangé (compatibilité)');
+  else ko('l’effectif total reste inchangé', JSON.stringify(apres));
+  if (apres.actifs_hors_animateurs === avant.actifs_hors_animateurs - 1)
+    ok('l’effectif hors animateurs diminue d’autant');
+  else ko('l’effectif hors animateurs diminue d’autant', JSON.stringify(apres));
+
+  // Les totaux d'argent, eux, ne doivent PAS exclure les animateurs.
+  await attendOk('Caissier encaisse la cotisation d’un animateur', 'caissier',
+    `insert into public.cotisations (lecteur_id, date_samedi, paye) values ($1, public.dernier_samedi(), true) returning id`, [l1.id]);
+  const caisse = (await enAdminSql(`select total_cotisations from public.v_caisse_totaux`))[0];
+  if (Number(caisse.total_cotisations) === 100)
+    ok('la caisse comptabilise bien la cotisation animateur (100 F)');
+  else ko('la caisse comptabilise la cotisation animateur', JSON.stringify(caisse));
+
+  await enAdminSql(`delete from public.cotisations where lecteur_id=$1`, [l1.id]);
+  await attendOk('CO paroissial retire le lecteur des animateurs', 'co_paroissial',
+    `select public.changer_fraternite($1, $2)`, [l1.id, frat2]);
+}
+
 await attendRefus('responsable ne modifie pas le nom d\'un lecteur', 'responsable',  `update public.lecteurs set nom = 'X' where id = $1 returning id`, [l1.id]);
 await attendRefus('caissier ne modifie pas le grade directement', 'caissier', `update public.lecteurs set grade_id = 3 where id = $1 returning id`, [l1.id]);
 await attendRefus('responsable ne peut plus faire d\'UPDATE direct de fraternite_id (policy fermée)', 'responsable',

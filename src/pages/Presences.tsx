@@ -7,6 +7,12 @@ import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import { useDebounce } from '../lib/useDebounce';
 import {
+  filtrerParFraternite,
+  idFraterniteAnimateur,
+  libelleVueGlobale,
+  vueAnimateurs,
+} from '../lib/fraternites';
+import {
   dateISO,
   deplaceMois,
   deplaceSemaine,
@@ -104,7 +110,7 @@ export default function Presences() {
           .order('nom').order('prenom').order('matricule')
           .range(de, a)
       ),
-      supabase.from('fraternites').select('id, nom').order('nom'),
+      supabase.from('fraternites').select('id, nom, system_key').order('nom'),
       // 200 lecteurs × 5 samedis = 1 000 lignes : la limite PostgREST. Paginé.
       toutesLesLignes<Presence>((de, a) =>
         supabase
@@ -136,10 +142,15 @@ export default function Presences() {
     return m;
   }, [presences]);
 
+  const animateurId = idFraterniteAnimateur(fraternites);
+  const estVueAnimateurs = vueAnimateurs(fId, animateurId);
+
+  // Les animateurs sortent de la vue globale pour alléger la liste à pointer.
+  // C'est un confort de LECTURE : cette page n'affiche aucun total, il n'y a
+  // donc rien à recompter. Ils réapparaissent en sélectionnant leur fraternité.
   const filtered = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
-    return lecteurs.filter((l) => {
-      if (fId && l.fraternite_id !== fId) return false;
+    return filtrerParFraternite(lecteurs, fId, animateurId).filter((l) => {
       if (!q) return true;
       return (
         l.matricule.toLowerCase().includes(q) ||
@@ -147,7 +158,7 @@ export default function Presences() {
         l.prenom.toLowerCase().includes(q)
       );
     });
-  }, [lecteurs, fId, debouncedSearch]);
+  }, [lecteurs, fId, animateurId, debouncedSearch]);
 
   /** Samedis déjà arrivés : seuls ceux-là sont comptabilisés. */
   const samedisArrivesListe = useMemo(
@@ -285,6 +296,7 @@ export default function Presences() {
                     annee,
                     mois,
                     fraternite: fraternites.find((f) => f.id === fId)?.nom ?? null,
+                    horsAnimateurs: !fId && animateurId !== null,
                     lecteurs: filtered,
                     presences,
                     auteur: profile?.full_name ?? '—',
@@ -355,13 +367,18 @@ export default function Presences() {
           aria-label="Filtrer par fraternité"
           className={`${inputCls} w-full sm:w-auto`}
         >
-          <option value="">Vue globale — toutes les fraternités</option>
+          <option value="">{libelleVueGlobale(animateurId)}</option>
           {fraternites.map((f) => (
             <option key={f.id} value={f.id}>
               {f.nom}
             </option>
           ))}
         </select>
+        {estVueAnimateurs && (
+          <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+            Vue animateurs
+          </span>
+        )}
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}

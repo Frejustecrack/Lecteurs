@@ -154,6 +154,27 @@ export const ROLE_LABELS: Record<Role, string> = {
   responsable: 'Responsable',
 };
 
+/**
+ * Libellés DÉSAMBIGUÏSÉS, réservés à l'écran d'administration des comptes.
+ *
+ * `ROLE_LABELS` affiche volontairement le même intitulé pour `co` et
+ * `co_paroissial` : vis-à-vis de la communauté, c'est la même fonction.
+ *
+ * Mais au moment d'ATTRIBUER un rôle, cette égalité devient un piège : la
+ * liste déroulante proposait deux entrées « Chargé des Opérations » rigoureusement
+ * identiques, et la colonne « Rôle » affichait la même chose pour les deux.
+ * L'Administrateur ne pouvait donc ni choisir en connaissance de cause, ni
+ * vérifier ce qu'il avait choisi — alors que la différence est réelle : seul
+ * `co_paroissial` gère les membres de la fraternité au tarif Animateur.
+ */
+export const ROLE_LABELS_ADMIN: Record<Role, string> = {
+  admin: 'Administrateur',
+  co: 'Chargé des Opérations (diocésain)',
+  co_paroissial: 'Chargé des Opérations (paroissial) — gère la fraternité Animateur',
+  caissier: 'Caissier',
+  responsable: 'Responsable',
+};
+
 // ---------------------------------------------------------------------------
 // Helpers de rôle — à utiliser PARTOUT à la place des comparaisons littérales.
 //
@@ -179,6 +200,19 @@ export function estCaissier(role: Role | null | undefined): boolean {
 }
 
 /**
+ * Chargé des Opérations **paroissial** — le seul libellé habilité sur la
+ * fraternité système « Animateur ».
+ *
+ * Contrairement à `estCO`, ce test n'est PAS un alias : la base distingue
+ * strictement les deux libellés sur ce point précis
+ * (`changer_fraternite` et `proteger_affectation_animateur`,
+ * migration 20261003220000 → `current_role() is distinct from 'co_paroissial'`).
+ */
+export function estCOParoissial(role: Role | null | undefined): boolean {
+  return role === 'co_paroissial';
+}
+
+/**
  * Export PDF — cahier des charges §17 : Admin, Chargé des Opérations et
  * Caissiers (les Responsables consultent sans exporter).
  */
@@ -189,4 +223,45 @@ export function peutExporter(role: Role | null | undefined): boolean {
 /** Modification des fiches lecteurs : Admin et Chargé des Opérations. */
 export function peutGererLecteurs(role: Role | null | undefined): boolean {
   return estAdmin(role) || estCO(role);
+}
+
+/**
+ * Ajout / retrait de membres dans une fraternité.
+ *
+ * Reflète exactement ce que la base autorise, afin qu'aucun bouton visible ne
+ * débouche sur un refus RLS (et réciproquement qu'aucun droit réel ne reste
+ * invisible dans l'interface) :
+ *
+ *  - fraternité **ordinaire** : tout compte authentifié — l'appartenance est
+ *    une information de vie de groupe, corrigée sur le terrain
+ *    (`changer_fraternite`, migration 20260914150600) ;
+ *  - fraternité **système « Animateur »** : le **CO paroissial uniquement**,
+ *    car entrer ou sortir de cette fraternité recalcule tout l'historique des
+ *    cotisations payées (migration 20261003220000).
+ *
+ * @param systemKey `fraternite.system_key` de la fraternité ciblée.
+ */
+export function peutGererMembresFraternite(
+  role: Role | null | undefined,
+  systemKey: Fraternite['system_key']
+): boolean {
+  if (!role) return false;
+  if (systemKey === 'animateur') return estCOParoissial(role);
+  return true;
+}
+
+/**
+ * Déplacer un lecteur de `depuis` vers `vers` : les DEUX extrémités comptent.
+ * Sortir quelqu'un d'« Animateur » est aussi réservé au CO paroissial que l'y
+ * faire entrer — c'est la règle que `changer_fraternite` applique en base.
+ */
+export function peutDeplacerEntreFraternites(
+  role: Role | null | undefined,
+  depuis: Fraternite['system_key'],
+  vers: Fraternite['system_key']
+): boolean {
+  return (
+    peutGererMembresFraternite(role, depuis) &&
+    peutGererMembresFraternite(role, vers)
+  );
 }

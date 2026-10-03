@@ -22,6 +22,16 @@ import {
   semaineLabel,
 } from '../lib/dates';
 import { useDebounce } from '../lib/useDebounce';
+import {
+  compterAnimateurs,
+  filtrerParFraternite,
+  filtrerPourTotaux,
+  idFraterniteAnimateur,
+  libelleVueGlobale,
+  mentionAnimateurs,
+  vueAnimateurs,
+} from '../lib/fraternites';
+import { montantParametre } from '../lib/validation';
 import { traduireErreur } from '../lib/errors';
 import { journaliserExport } from '../lib/journal';
 import {
@@ -119,8 +129,8 @@ export default function Cotisations() {
     setLecteurs(trierLecteurs((rL.data ?? []) as Lecteur[]));
     setFraternites((rF.data ?? []) as Fraternite[]);
     const settings = new Map((rSet.data ?? []).map((s) => [s.key, Number(s.value)]));
-    setMontantCot(settings.get('montant_cotisation') || 50);
-    setMontantAnimateur(settings.get('montant_cotisation_animateur') || 100);
+    setMontantCot(montantParametre(settings.get('montant_cotisation'), 50));
+    setMontantAnimateur(montantParametre(settings.get('montant_cotisation_animateur'), 100));
 
     if (samedis.length > 0) {
       // 200 lecteurs × 5 samedis = 1 000 lignes : la limite PostgREST. Paginé.
@@ -157,24 +167,47 @@ export default function Cotisations() {
     return m;
   }, [cotisations]);
 
-  const animateurId = fraternites.find((f) => f.system_key === 'animateur')?.id ?? null;
+  const animateurId = idFraterniteAnimateur(fraternites);
+  const estVueAnimateurs = vueAnimateurs(fId, animateurId);
   const tarifLecteur = useCallback(
     (lecteur: Lecteur) => lecteur.fraternite_id === animateurId ? montantAnimateur : montantCot,
     [animateurId, montantAnimateur, montantCot]
   );
 
-  const filtered = useMemo(() => {
-    const q = debouncedSearch.trim().toLowerCase();
-    return lecteurs.filter((l) => {
-      if (fId && l.fraternite_id !== fId) return false;
+  const correspondRecherche = useCallback(
+    (l: Lecteur) => {
+      const q = debouncedSearch.trim().toLowerCase();
       if (!q) return true;
       return (
         l.matricule.toLowerCase().includes(q) ||
         l.nom.toLowerCase().includes(q) ||
         l.prenom.toLowerCase().includes(q)
       );
-    });
-  }, [lecteurs, fId, debouncedSearch]);
+    },
+    [debouncedSearch]
+  );
+
+  /**
+   * AFFICHAGE — les animateurs sortent de la vue globale pour alléger la
+   * liste à pointer. C'est un confort de lecture, rien de plus.
+   */
+  const filtered = useMemo(
+    () => filtrerParFraternite(lecteurs, fId, animateurId).filter(correspondRecherche),
+    [lecteurs, fId, animateurId, correspondRecherche]
+  );
+
+  /**
+   * COMPTABILITÉ — les animateurs sont TOUJOURS comptés. Les cartes de
+   * statistiques doivent correspondre à l'argent réellement encaissé et dû,
+   * faute de quoi le total de l'écran ne tombe plus juste avec la caisse.
+   */
+  const comptabilises = useMemo(
+    () => filtrerPourTotaux(lecteurs, fId).filter(correspondRecherche),
+    [lecteurs, fId, correspondRecherche]
+  );
+
+  const nbAnimateursComptes = compterAnimateurs(comptabilises, animateurId);
+  const mentionAnim = mentionAnimateurs(nbAnimateursComptes);
 
   async function toggle(l: Lecteur, sam: string) {
     if (estAvantPremierSamediActif(sam, l.created_at)) {
@@ -250,7 +283,7 @@ export default function Cotisations() {
 
   // --------------------------------------------------------------- totaux
   /** Total payé sur la vue — même filtre que les colonnes de chaque ligne : les samedis antérieurs au premier samedi actif ne comptent jamais. */
-  const totalPaye = filtered.reduce(
+  const totalPaye = comptabilises.reduce(
     (s, l) =>
       s +
       samedis
@@ -263,7 +296,7 @@ export default function Cotisations() {
     0
   );
   /** Samedis arrivés et non réglés à partir du premier samedi actif — les samedis antérieurs ou à venir ne comptent pas. */
-  const { nbDu, totalDu } = filtered.reduce(
+  const { nbDu, totalDu } = comptabilises.reduce(
     (totaux, l) => {
       const nombre = samedisArrivesListe.filter(
         (sam) => !estAvantPremierSamediActif(sam, l.created_at) && !map.get(`${l.id}|${sam}`)?.paye
@@ -319,6 +352,7 @@ export default function Cotisations() {
                     annee,
                     mois,
                     fraternite: fraternites.find((f) => f.id === fId)?.nom ?? null,
+                    horsAnimateurs: !fId && animateurId !== null,
                     lecteurs: filtered,
                     cotisations,
                     montantCot,
@@ -389,13 +423,13 @@ export default function Cotisations() {
           label="Total payé (vue)"
           value={fmtMoney(totalPaye)}
           tone="green"
-          sub={periodeLabel}
+          sub={mentionAnim ? `${periodeLabel} — ${mentionAnim}` : periodeLabel}
         />
         <StatCard
           label="Cotisations dues (vue)"
           value={fmtMoney(totalDu)}
           tone="red"
-          sub={`${nbDu} samedi(s) actif(s) non réglé(s)`}
+          sub={`${nbDu} samedi(s) actif(s) non réglé(s)${mentionAnim ? ` — ${mentionAnim}` : ''}`}
         />
         <StatCard
           label="Samedis comptés"
@@ -404,9 +438,15 @@ export default function Cotisations() {
         />
         <StatCard
           label="Lecteurs (vue)"
-          value={filtered.length}
+          value={comptabilises.length}
           tone="amber"
-          sub={isCaissier ? 'clic sur une case = payé/dû' : 'lecture seule'}
+          sub={
+            nbAnimateursComptes > 0
+              ? `dont ${nbAnimateursComptes} animateur(s) — ${filtered.length} affiché(s)`
+              : isCaissier
+                ? 'clic sur une case = payé/dû'
+                : 'lecture seule'
+          }
         />
       </div>
 
@@ -417,13 +457,18 @@ export default function Cotisations() {
           aria-label="Filtrer par fraternité"
           className={`${inputCls} w-full sm:w-auto`}
         >
-          <option value="">Vue globale — toutes les fraternités</option>
+          <option value="">{libelleVueGlobale(animateurId)}</option>
           {fraternites.map((f) => (
             <option key={f.id} value={f.id}>
               {f.nom}
             </option>
           ))}
         </select>
+        {estVueAnimateurs && (
+          <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+            Vue animateurs — {fmtMoney(montantAnimateur)} / samedi
+          </span>
+        )}
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}

@@ -4,8 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import { useDebounce } from '../lib/useDebounce';
 import { fmtDateHeure } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
-import type { LogEntry, Profile, Role } from '../lib/types';
-import { ROLE_LABELS } from '../lib/types';
+import type { Fraternite, LogEntry, Profile, Role } from '../lib/types';
+import { ROLE_LABELS_ADMIN } from '../lib/types';
 import {
   Badge,
   BtnPrimary,
@@ -33,21 +33,28 @@ export default function Admin() {
   const debouncedQLog = useDebounce(qLog, 300);
   const [busyRole, setBusyRole] = useState<string | null>(null);
   const [busyMontant, setBusyMontant] = useState(false);
+  const [fraternites, setFraternites] = useState<Fraternite[]>([]);
+  const [fratAnimateur, setFratAnimateur] = useState('');
+  const [busyAnimateur, setBusyAnimateur] = useState(false);
 
   const load = useCallback(async () => {
-    const [rL, rP, rS] = await Promise.all([
+    const [rL, rP, rS, rF] = await Promise.all([
       supabase.from('logs').select('*').order('id', { ascending: false }).limit(400),
       supabase.from('profiles').select('*').order('full_name'),
       supabase
         .from('app_settings')
         .select('key, value')
         .in('key', ['montant_cotisation', 'montant_cotisation_animateur']),
+      supabase.from('fraternites').select('id, nom, responsables, system_key').order('nom'),
     ]);
     setLogs((rL.data ?? []) as LogEntry[]);
     setComptes((rP.data ?? []) as Profile[]);
     const settings = new Map((rS.data ?? []).map((s) => [s.key, String(s.value)]));
     setMontantCot(settings.get('montant_cotisation') ?? '50');
     setMontantAnimateur(settings.get('montant_cotisation_animateur') ?? '100');
+    const frats = (rF.data ?? []) as Fraternite[];
+    setFraternites(frats);
+    setFratAnimateur(frats.find((f) => f.system_key === 'animateur')?.id ?? '');
     setLoading(false);
   }, []);
 
@@ -60,7 +67,7 @@ export default function Admin() {
       toast("Vous ne pouvez pas modifier votre propre rôle ici.", 'err');
       return;
     }
-    if (!confirm(`Changer le rôle de ${c.full_name ?? c.id} en ${ROLE_LABELS[role]} ?`))
+    if (!confirm(`Changer le rôle de ${c.full_name ?? c.id} en ${ROLE_LABELS_ADMIN[role]} ?`))
       return;
     setBusyRole(c.id);
     const { error } = await supabase
@@ -115,6 +122,47 @@ export default function Admin() {
       toast(`Tarifs enregistrés : normal ${normal} F, Animateur ${animateur} F.`);
       load();
     }
+  }
+
+  /**
+   * Déplace le tarif Animateur vers une autre fraternité.
+   *
+   * Le tarif spécial ne suit pas le NOM d'une fraternité mais un marqueur
+   * technique. Sans cet écran, une communauté qui utilise sa propre
+   * fraternité d'animateurs voyait ses membres facturés au tarif normal,
+   * sans aucun moyen de corriger : poser le marqueur est interdit par
+   * trigger à tout compte applicatif, et l'unique point d'entrée autorisé
+   * est ce RPC réservé à l'Admin (migration 20261003234500).
+   */
+  async function saveFraterniteAnimateur() {
+    const cible = fratAnimateur || null;
+    const nom = fraternites.find((f) => f.id === cible)?.nom;
+    const actuelle = fraternites.find((f) => f.system_key === 'animateur');
+    if ((actuelle?.id ?? '') === (cible ?? '')) return;
+
+    const membres = cible
+      ? `Les cotisations DÉJÀ PAYÉES des membres de « ${nom} » seront recalculées au tarif Animateur.`
+      : 'Plus aucune fraternité ne bénéficiera du tarif Animateur.';
+    const ancienne = actuelle
+      ? `\n\nLes membres de « ${actuelle.nom} » repasseront au tarif normal, historique payé compris.`
+      : '';
+    if (!confirm(`${membres}${ancienne}\n\nContinuer ?`)) return;
+
+    setBusyAnimateur(true);
+    const { error } = await supabase.rpc('definir_fraternite_animateur', {
+      p_fraternite: cible,
+    });
+    setBusyAnimateur(false);
+    if (error) {
+      toast(traduireErreur(error, 'désigner la fraternité au tarif Animateur'), 'err');
+      return;
+    }
+    toast(
+      cible
+        ? `« ${nom} » applique désormais le tarif Animateur.`
+        : 'Le tarif Animateur ne s’applique plus à aucune fraternité.'
+    );
+    load();
   }
 
   if (loading) return <Spinner label="Chargement de l'administration…" />;
@@ -269,7 +317,7 @@ export default function Admin() {
                     </td>
                     <td className="px-4 py-2">
                       {c.role ? (
-                        <Badge tone="blue">{ROLE_LABELS[c.role]}</Badge>
+                        <Badge tone="blue">{ROLE_LABELS_ADMIN[c.role]}</Badge>
                       ) : (
                         <Badge tone="gray">En attente</Badge>
                       )}
@@ -288,9 +336,9 @@ export default function Admin() {
                             }
                           >
                             <option value="">— sans rôle —</option>
-                            {(Object.keys(ROLE_LABELS) as Role[]).map((r) => (
+                            {(Object.keys(ROLE_LABELS_ADMIN) as Role[]).map((r) => (
                               <option key={r} value={r}>
-                                {ROLE_LABELS[r]}
+                                {ROLE_LABELS_ADMIN[r]}
                               </option>
                             ))}
                           </select>
@@ -340,6 +388,48 @@ export default function Admin() {
           <p className="mt-2 text-xs text-slate-400">
             Les nouveaux paiements utilisent le tarif correspondant à la fraternité actuelle. Lors d’une entrée ou sortie d’Animateur, tout l’historique payé du lecteur est recalculé.
           </p>
+
+          <div className="mt-5 border-t border-slate-100 pt-4">
+            <h3 className="mb-1 text-sm font-bold text-slate-700">
+              Fraternité au tarif Animateur
+            </h3>
+            <p className="mb-3 text-xs text-slate-400">
+              Le tarif spécial suit cette désignation, et non le nom de la
+              fraternité. Si vos animateurs sont regroupés dans une fraternité
+              que vous avez créée vous-même, choisissez-la ici : sans cela, ils
+              restent facturés au tarif normal.
+            </p>
+            <select
+              aria-label="Fraternité bénéficiant du tarif Animateur"
+              className={inputCls}
+              value={fratAnimateur}
+              onChange={(e) => setFratAnimateur(e.target.value)}
+            >
+              <option value="">— Aucune fraternité au tarif Animateur —</option>
+              {fraternites.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.nom}
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 text-xs font-medium text-amber-600">
+              Changer cette désignation recalcule l’historique des cotisations
+              déjà payées des deux fraternités concernées.
+            </p>
+            <div className="mt-3">
+              <BtnPrimary
+                onClick={saveFraterniteAnimateur}
+                busy={busyAnimateur}
+                busyLabel="Application…"
+                disabled={
+                  (fraternites.find((f) => f.system_key === 'animateur')?.id ?? '') ===
+                  fratAnimateur
+                }
+              >
+                Appliquer
+              </BtnPrimary>
+            </div>
+          </div>
           <div className="mt-4">
             <BtnPrimary
               onClick={saveMontant}

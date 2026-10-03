@@ -40,6 +40,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [kpi, setKpi] = useState({
     actifs: 0,
+    animateurs: 0,
     tauxPresence: 0,
     presenceMoyenne: 0,
     tauxCotisation: 0,
@@ -58,7 +59,23 @@ export default function Dashboard() {
   }, []);
 
   // Synchronisation temps réel : toute modif de présence/cotisation/lecteur recharge le tableau de bord
-  useRealtime('realtime-dashboard', ['presences', 'cotisations', 'lecteurs', 'caisse_operations', 'evenements', 'evenement_paiements'], load);
+  // `fraternites` est indispensable : désigner la fraternité au tarif Animateur
+// ne touche aucune autre table, mais change l'effectif annoncé (`animateurs`
+// dans v_lecteurs_compteurs). Sans cet abonnement, la mention restait figée
+// jusqu'au prochain rechargement manuel.
+  useRealtime(
+    'realtime-dashboard',
+    [
+      'presences',
+      'cotisations',
+      'lecteurs',
+      'fraternites',
+      'caisse_operations',
+      'evenements',
+      'evenement_paiements',
+    ],
+    load
+  );
 
   async function load() {
     const now = new Date();
@@ -93,7 +110,20 @@ export default function Dashboard() {
           .limit(6),
       ]);
 
-    const compteurs = (rCompteurs.data ?? { actifs: 0 }) as { actifs: number };
+    const compteurs = (rCompteurs.data ?? { actifs: 0 }) as {
+      actifs: number;
+      animateurs?: number;
+      actifs_hors_animateurs?: number;
+    };
+    // Le tableau de bord ne montre que des TOTAUX : il compte donc toute la
+    // communauté, animateurs compris. Le retrait des animateurs des vues
+    // globales de Présences / Cotisations / Suivis est un confort de lecture
+    // des listes, pas une règle comptable — un total amputé ne tomberait plus
+    // juste avec la caisse.
+    //
+    // `animateurs` reste optionnel : une base où la migration 20261004090000
+    // n'est pas encore appliquée affiche simplement l'effectif sans mention.
+    const animateurs = Number(compteurs.animateurs ?? 0);
     const actifs = Number(compteurs.actifs);
     const presParMois = new Map(
       ((rPresMois.data ?? []) as { mois: string; presents: number; absents: number; samedis_eligibles?: number }[]).map((r) => [r.mois, r])
@@ -140,6 +170,7 @@ export default function Dashboard() {
 
     setKpi({
       actifs,
+      animateurs,
       tauxPresence: pct(nbPresent, samedisEligibles),
       presenceMoyenne:
         samedis.length > 0 ? Math.round((nbPresent / samedis.length) * 10) / 10 : 0,
@@ -193,7 +224,15 @@ export default function Dashboard() {
       />
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <StatCard label="Lecteurs actifs" value={kpi.actifs} />
+        <StatCard
+          label="Lecteurs actifs"
+          value={kpi.actifs}
+          sub={
+            kpi.animateurs > 0
+              ? `dont ${kpi.animateurs} animateur(s)`
+              : undefined
+          }
+        />
         <StatCard
           label="Taux de présence"
           value={kpi.tauxPresence + ' %'}

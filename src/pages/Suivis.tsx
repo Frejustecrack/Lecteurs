@@ -6,6 +6,12 @@ import { toutesLesLignes } from '../lib/pagination';
 import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import { useDebounce } from '../lib/useDebounce';
+import {
+  idFraterniteAnimateur,
+  libelleVueGlobale,
+  mentionAnimateurs,
+  vueAnimateurs,
+} from '../lib/fraternites';
 import { traduireErreur } from '../lib/errors';
 import { journaliserExport } from '../lib/journal';
 import {
@@ -28,6 +34,7 @@ import {
   absencesEffectives,
   appliquerFiltreRecap,
   calculerRecaps,
+  indicateursRecap,
   filtrerRecaps,
   type FiltreRecap,
 } from '../lib/recap';
@@ -137,7 +144,7 @@ export default function Suivis() {
           .order('nom').order('prenom').order('matricule')
           .range(de, a)
       ),
-      supabase.from('fraternites').select('id, nom').order('nom'),
+      supabase.from('fraternites').select('id, nom, system_key').order('nom'),
     ]);
     setLecteurs(trierLecteurs((rL.data ?? []) as Lecteur[]));
     setFraternites((rF.data ?? []) as Fraternite[]);
@@ -181,27 +188,70 @@ export default function Suivis() {
     [lecteurs, presences, samedisComptes]
   );
 
+  const animateurId = idFraterniteAnimateur(fraternites);
+  const estVueAnimateurs = vueAnimateurs(fId, animateurId);
+
   const filtres = useMemo(
-    () => filtrerRecaps(recaps, { fraterniteId: fId, recherche: debouncedSearch, filtre }),
+    () =>
+      filtrerRecaps(recaps, {
+        fraterniteId: fId,
+        recherche: debouncedSearch,
+        filtre,
+        animateurFraterniteId: animateurId,
+      }),
+    [recaps, fId, debouncedSearch, filtre, animateurId]
+  );
+
+  /**
+   * COMPTABILITÉ — périmètre des cartes de statistiques : les animateurs y
+   * sont TOUJOURS comptés. Leur retrait de la vue globale est un confort de
+   * lecture ; les indicateurs, eux, doivent décrire la communauté entière.
+   */
+  const comptabilises = useMemo(
+    () =>
+      filtrerRecaps(recaps, {
+        fraterniteId: fId,
+        recherche: debouncedSearch,
+        filtre,
+      }),
     [recaps, fId, debouncedSearch, filtre]
+  );
+
+  const nbAnimateursComptes = animateurId
+    ? comptabilises.filter((r) => r.lecteur.fraternite_id === animateurId).length
+    : 0;
+  const mentionAnim = mentionAnimateurs(nbAnimateursComptes);
+
+  /**
+   * Base des compteurs affichés sur les pastilles de filtre : même périmètre
+   * (fraternité + recherche) que le tableau, filtre d'assiduité exclu.
+   *
+   * Auparavant les pastilles comptaient `recaps` BRUT : elles annonçaient donc
+   * des effectifs qui ne correspondaient ni à la fraternité choisie, ni à la
+   * recherche en cours. Avec l'exclusion des animateurs, l'écart devenait
+   * visible à l'écran — deux nombres contradictoires sur la même page.
+   */
+  const perimetre = useMemo(
+    () =>
+      filtrerRecaps(recaps, {
+        fraterniteId: fId,
+        recherche: debouncedSearch,
+        filtre: 'tous',
+        animateurFraterniteId: animateurId,
+      }),
+    [recaps, fId, debouncedSearch, animateurId]
   );
 
   const tries = useMemo(() => [...filtres].sort((a, b) => comparerLecteurs(a.lecteur, b.lecteur)), [filtres]);
 
   // ---------------------------------------------------------------- indicateurs
   const nbSeances = samedisComptes.length;
-  const nbAssidus = filtres.filter((r) => r.total > 0 && r.present === r.total).length;
-  const nbAbsents = filtres.filter((r) => absencesEffectives(r) > 0).length;
-  const moyennePresents =
-    nbSeances > 0
-      ? Math.round(
-          (filtres.reduce((s, r) => s + r.present, 0) / nbSeances) * 10
-        ) / 10
-      : 0;
-  const tauxGlobal =
-    filtres.length > 0
-      ? Math.round(filtres.reduce((s, r) => s + r.taux, 0) / filtres.length)
-      : 0;
+  // Même fonction que le pied du bilan PDF : impossible de diverger.
+  const indicateurs = indicateursRecap(comptabilises, nbSeances);
+  const nbAssidus = indicateurs.assidus;
+  const nbAbsents = indicateurs.absents;
+  const moyennePresents = indicateurs.moyennePresents;
+  const tauxGlobal = indicateurs.tauxMoyen;
 
   // ---------------------------------------------------------------- navigation
   function allerPrecedent() {
@@ -260,7 +310,11 @@ export default function Suivis() {
     try {
       const morceaux = [
         filtre !== 'tous' ? FILTRES.find((f) => f.value === filtre)?.label : null,
-        fId ? `Fraternité : ${fraterniteNom(fId) ?? '—'}` : null,
+        fId
+          ? `Fraternité : ${fraterniteNom(fId) ?? '—'}`
+          : animateurId
+            ? 'Hors animateurs'
+            : null,
         search.trim() ? `Recherche : « ${search.trim()} »` : null,
         samediChoisi ? `Samedi ${fmtDate(samediChoisi)}` : null,
       ].filter(Boolean);
@@ -268,6 +322,9 @@ export default function Suivis() {
         periode: periodeLabel,
         samedis: samedisComptes,
         recaps: tries,
+        // Indicateurs du pied de page : même périmètre que les cartes de
+        // l'écran (animateurs compris), sinon le PDF contredirait l'écran.
+        recapsTotaux: comptabilises,
         fraterniteNom,
         contexte: morceaux.length > 0 ? morceaux.join('   •   ') : undefined,
         auteur: profile?.full_name ?? '—',
@@ -372,13 +429,13 @@ export default function Suivis() {
           label="Présents en moyenne"
           value={moyennePresents}
           tone="green"
-          sub={`taux moyen ${tauxGlobal} %`}
+          sub={`taux moyen ${tauxGlobal} %${mentionAnim ? ` — ${mentionAnim}` : ''}`}
         />
         <StatCard
           label="Assidus / absents"
           value={`${nbAssidus} / ${nbAbsents}`}
           tone={nbAbsents > 0 ? 'red' : 'green'}
-          sub="100 % de présence / ≥ 1 absence"
+          sub={`100 % de présence / ≥ 1 absence${mentionAnim ? ` — ${mentionAnim}` : ''}`}
         />
       </div>
 
@@ -387,7 +444,7 @@ export default function Suivis() {
         <div className="flex flex-wrap gap-2">
           {FILTRES.map((f) => {
             const actif = filtre === f.value;
-            const compte = appliquerFiltreRecap(recaps, f.value).length;
+            const compte = appliquerFiltreRecap(perimetre, f.value).length;
             return (
               <button
                 key={f.value}
@@ -419,13 +476,18 @@ export default function Suivis() {
             aria-label="Filtrer par fraternité"
             className={`${inputCls} w-full sm:w-auto`}
           >
-            <option value="">Toutes les fraternités</option>
+            <option value="">{libelleVueGlobale(animateurId)}</option>
             {fraternites.map((f) => (
               <option key={f.id} value={f.id}>
                 {f.nom}
               </option>
             ))}
           </select>
+          {estVueAnimateurs && (
+            <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+              Vue animateurs
+            </span>
+          )}
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}

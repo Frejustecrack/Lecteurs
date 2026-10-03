@@ -25,6 +25,7 @@ import {
 } from '../src/lib/dates.ts';
 import {
   anneeCourante,
+  montantParametre,
   bornesAnneeAdhesion,
   bornesAnneeNaissance,
   validerAnneesLecteur,
@@ -35,9 +36,28 @@ import {
   appliquerFiltreRecap,
   calculerRecaps,
   filtrerRecaps,
+  indicateursRecap,
   trierRecaps,
 } from '../src/lib/recap.ts';
-import type { Lecteur } from '../src/lib/types.ts';
+import {
+  ROLE_LABELS,
+  ROLE_LABELS_ADMIN,
+  estCO,
+  estCOParoissial,
+  peutDeplacerEntreFraternites,
+  peutGererMembresFraternite,
+  type Lecteur,
+  type Role,
+} from '../src/lib/types.ts';
+import {
+  compterAnimateurs,
+  filtrerParFraternite,
+  filtrerPourTotaux,
+  idFraterniteAnimateur,
+  libelleVueGlobale,
+  mentionAnimateurs,
+  vueAnimateurs,
+} from '../src/lib/fraternites.ts';
 import { creerPlanificateur } from '../src/lib/planificateur.ts';
 import { toutesLesLignes } from '../src/lib/pagination.ts';
 
@@ -386,6 +406,77 @@ eq(
   filtrerRecaps(recaps, { fraterniteId: 'fr2', filtre: 'absents' }).length,
   1
 );
+
+// Suivis doit décrire EXACTEMENT la même population que Présences : les
+// animateurs sortent de la vue globale et reviennent via leur fraternité.
+// Ici fr2 joue le rôle de la fraternité des animateurs (Jean en est membre).
+eq(
+  'Suivis — vue globale : les animateurs sont exclus',
+  filtrerRecaps(recaps, { animateurFraterniteId: 'fr2' }).length,
+  2
+);
+eq(
+  'Suivis — vue globale : aucun animateur ne subsiste',
+  filtrerRecaps(recaps, { animateurFraterniteId: 'fr2' })
+    .filter((r) => r.lecteur.fraternite_id === 'fr2').length,
+  0
+);
+eq(
+  'Suivis — filtre Animateur : eux seuls apparaissent',
+  filtrerRecaps(recaps, { fraterniteId: 'fr2', animateurFraterniteId: 'fr2' }).length,
+  1
+);
+eq(
+  'Suivis — une fraternité ordinaire reste intacte',
+  filtrerRecaps(recaps, { fraterniteId: 'fr1', animateurFraterniteId: 'fr2' }).length,
+  2
+);
+eq(
+  'Suivis — sans désignation, la vue globale reste exhaustive',
+  filtrerRecaps(recaps, { animateurFraterniteId: null }).length,
+  3
+);
+eq(
+  'Suivis — l’exclusion se cumule avec le filtre d’assiduité',
+  filtrerRecaps(recaps, { filtre: 'absents', animateurFraterniteId: 'fr2' }).length,
+  1
+);
+eq(
+  'Suivis — l’exclusion se cumule avec la recherche',
+  filtrerRecaps(recaps, { recherche: 'Jean', animateurFraterniteId: 'fr2' }).length,
+  0
+);
+
+// Indicateurs partagés par l'écran Suivis et le pied du bilan PDF : une seule
+// fonction, donc aucun écart possible entre les deux affichages.
+{
+  const ind = indicateursRecap(recaps, samedis.length);
+  eq('indicateurs — effectif', ind.effectif, 3);
+  eq('indicateurs — assidus (Marie seule)', ind.assidus, 1);
+  eq('indicateurs — ont été absents (Paul + Jean)', ind.absents, 2);
+  eq('indicateurs — taux moyen (100+75+25)/3', ind.tauxMoyen, 67);
+  eq('indicateurs — présents en moyenne (4+3+1)/4', ind.moyennePresents, 2);
+
+  const vide = indicateursRecap([], 4);
+  eq('indicateurs — effectif nul', vide.effectif, 0);
+  eq('indicateurs — aucun taux sans lecteur (pas de NaN)', vide.tauxMoyen, 0);
+  eq('indicateurs — aucune moyenne sans lecteur', vide.moyennePresents, 0);
+
+  const sansSeance = indicateursRecap(recaps, 0);
+  eq('indicateurs — aucune séance : moyenne nulle (pas de division par zéro)', sansSeance.moyennePresents, 0);
+  eq('indicateurs — aucune séance : le taux reste calculé', sansSeance.tauxMoyen, 67);
+
+  // Le périmètre comptable (animateurs inclus) ne donne PAS le même résultat
+  // que la liste affichée : c'est précisément pourquoi le PDF doit recevoir
+  // les deux jeux séparément.
+  const affiche = filtrerRecaps(recaps, { animateurFraterniteId: 'fr2' });
+  eq('indicateurs — la liste affichée exclut bien un animateur', affiche.length, 2);
+  eq(
+    'indicateurs — écran et PDF divergeraient sans jeu séparé',
+    indicateursRecap(affiche, samedis.length).tauxMoyen !== ind.tauxMoyen,
+    true
+  );
+}
 eq(
   'aucun lecteur sans absence effective n’apparaît dans « absents »',
   appliquerFiltreRecap(recaps, 'absents').some((r) => absencesEffectives(r) === 0),
@@ -613,6 +704,231 @@ console.log('\n── Temps réel : regroupement et non-superposition des rechar
   await avancer(100); await tick();
   eq('une erreur est remontée à onErreur', erreurs.length, 1);
   eq('le rechargement suivant a bien lieu malgré l\'erreur précédente', n, 2);
+}
+
+// ============================================================================
+// Gestion des membres d'une fraternité.
+//
+// L'interface doit refléter EXACTEMENT ce que la base autorise :
+//  - `changer_fraternite` (20260914150600) est ouverte à tout compte connecté ;
+//  - sauf pour « Animateur », réservée au seul `co_paroissial`
+//    (20261003220000 : `current_role() is distinct from 'co_paroissial'`).
+// ============================================================================
+{
+  console.log('\n▶ Membres de fraternité — droits par rôle');
+  const tousRoles: Role[] = ['admin', 'co', 'co_paroissial', 'caissier', 'responsable'];
+
+  // --- Fraternité ordinaire : ouverte à tous les rôles connectés.
+  for (const role of tousRoles) {
+    verif(
+      `${role} peut gérer les membres d'une fraternité ordinaire`,
+      peutGererMembresFraternite(role, null)
+    );
+  }
+  verif(
+    'un compte sans rôle ne gère aucun membre',
+    !peutGererMembresFraternite(null, null) &&
+      !peutGererMembresFraternite(undefined, null)
+  );
+
+  // --- Fraternité système « Animateur » : CO paroissial uniquement.
+  verif(
+    'co_paroissial peut gérer les membres d’Animateur',
+    peutGererMembresFraternite('co_paroissial', 'animateur')
+  );
+  for (const role of tousRoles.filter((r) => r !== 'co_paroissial')) {
+    verif(
+      `${role} ne peut PAS gérer les membres d’Animateur`,
+      !peutGererMembresFraternite(role, 'animateur')
+    );
+  }
+
+  // --- `co` et `co_paroissial` restent des alias PARTOUT AILLEURS : la
+  //     distinction ne doit exister que sur la fraternité système.
+  verif(
+    'co et co_paroissial restent des alias pour estCO()',
+    estCO('co') && estCO('co_paroissial')
+  );
+  verif(
+    'estCOParoissial() ne reconnaît que co_paroissial',
+    estCOParoissial('co_paroissial') && !estCOParoissial('co') && !estCOParoissial('admin')
+  );
+
+  // --- Déplacement : les DEUX extrémités comptent (entrer ET sortir).
+  verif(
+    'co_paroissial peut déplacer un lecteur d’Animateur vers une ordinaire',
+    peutDeplacerEntreFraternites('co_paroissial', 'animateur', null)
+  );
+  verif(
+    'co_paroissial peut déplacer un lecteur vers Animateur',
+    peutDeplacerEntreFraternites('co_paroissial', null, 'animateur')
+  );
+  verif(
+    'le CO (non paroissial) ne peut pas SORTIR un lecteur d’Animateur',
+    !peutDeplacerEntreFraternites('co', 'animateur', null)
+  );
+  verif(
+    'l’Admin ne peut pas sortir un lecteur d’Animateur (règle base)',
+    !peutDeplacerEntreFraternites('admin', 'animateur', null)
+  );
+  verif(
+    'le CO déplace librement entre deux fraternités ordinaires',
+    peutDeplacerEntreFraternites('co', null, null)
+  );
+}
+
+// ============================================================================
+// Vues Présences / Cotisations : les animateurs sont hors de la vue globale.
+// ============================================================================
+{
+  console.log('\n▶ Vue globale — exclusion des animateurs');
+  const frats = [
+    { id: 'f-anim', system_key: 'animateur' as const },
+    { id: 'f-jean', system_key: null },
+    { id: 'f-luc', system_key: null },
+  ];
+  const animateurId = idFraterniteAnimateur(frats);
+  verif('la fraternité Animateur est identifiée par son marqueur', animateurId === 'f-anim');
+
+  const peuple = [
+    { nom: 'A', fraternite_id: 'f-anim' },
+    { nom: 'B', fraternite_id: 'f-anim' },
+    { nom: 'C', fraternite_id: 'f-jean' },
+    { nom: 'D', fraternite_id: 'f-luc' },
+    { nom: 'E', fraternite_id: null },
+  ];
+
+  const global = filtrerParFraternite(peuple, '', animateurId);
+  verif('vue globale : les animateurs sont exclus', global.every((l) => l.fraternite_id !== 'f-anim'));
+  verif('vue globale : tous les autres sont conservés', global.length === 3);
+  verif(
+    'vue globale : un lecteur sans fraternité reste visible',
+    global.some((l) => l.nom === 'E')
+  );
+
+  const vueAnim = filtrerParFraternite(peuple, 'f-anim', animateurId);
+  verif('filtre Animateur : seuls les animateurs apparaissent', vueAnim.length === 2);
+  verif(
+    'filtre Animateur : ce sont bien les bons',
+    vueAnim.map((l) => l.nom).join('') === 'AB'
+  );
+
+  const vueJean = filtrerParFraternite(peuple, 'f-jean', animateurId);
+  verif('filtre ordinaire : inchangé', vueJean.length === 1 && vueJean[0].nom === 'C');
+
+  // Aucune fraternité désignée : la vue globale redevient exhaustive.
+  const sansMarqueur = idFraterniteAnimateur([
+    { id: 'f-jean', system_key: null },
+    { id: 'f-anim', system_key: null },
+  ]);
+  verif('sans désignation, aucun identifiant animateur', sansMarqueur === null);
+  verif(
+    'sans désignation, la vue globale montre tout le monde',
+    filtrerParFraternite(peuple, '', sansMarqueur).length === 5
+  );
+
+  verif('le filtre ne modifie jamais le tableau source', peuple.length === 5);
+
+  verif('vueAnimateurs() détecte la vue dédiée', vueAnimateurs('f-anim', animateurId));
+  verif('vueAnimateurs() est faux en vue globale', !vueAnimateurs('', animateurId));
+  verif('vueAnimateurs() est faux sur une autre fraternité', !vueAnimateurs('f-jean', animateurId));
+  verif('vueAnimateurs() est faux sans désignation', !vueAnimateurs('', null));
+
+  verif(
+    'le libellé global annonce l’exclusion quand elle a lieu',
+    libelleVueGlobale(animateurId).includes('sauf les animateurs')
+  );
+  verif(
+    'le libellé global reste neutre sans désignation',
+    libelleVueGlobale(null) === 'Vue globale — toutes les fraternités'
+  );
+
+  // ----------------------------------------------------------------------
+  // Règle structurante : ce qu'on AFFICHE se filtre, ce qu'on COMPTE non.
+  // Le retrait des animateurs de la vue globale est un confort de lecture ;
+  // amputer les totaux ferait diverger l'écran et la caisse.
+  // ----------------------------------------------------------------------
+  const comptes = filtrerPourTotaux(peuple, '');
+  verif('périmètre comptable global : personne n’est retiré', comptes.length === 5);
+  verif(
+    'périmètre comptable global : les animateurs en font partie',
+    comptes.filter((l) => l.fraternite_id === 'f-anim').length === 2
+  );
+  verif(
+    'affiché (3) et compté (5) diffèrent bien en vue globale',
+    filtrerParFraternite(peuple, '', animateurId).length === 3 && comptes.length === 5
+  );
+  verif(
+    'sur une fraternité choisie, affiché et compté coïncident',
+    filtrerPourTotaux(peuple, 'f-jean').length ===
+      filtrerParFraternite(peuple, 'f-jean', animateurId).length
+  );
+  verif(
+    'sur la fraternité des animateurs aussi',
+    filtrerPourTotaux(peuple, 'f-anim').length === 2 &&
+      filtrerParFraternite(peuple, 'f-anim', animateurId).length === 2
+  );
+  verif('le périmètre comptable ne modifie pas la source', peuple.length === 5);
+
+  verif('compterAnimateurs compte la part animateurs', compterAnimateurs(comptes, animateurId) === 2);
+  verif('compterAnimateurs vaut 0 sans désignation', compterAnimateurs(comptes, null) === 0);
+  verif(
+    'compterAnimateurs vaut 0 sur une fraternité ordinaire',
+    compterAnimateurs(filtrerPourTotaux(peuple, 'f-jean'), animateurId) === 0
+  );
+
+  verif('la mention explicite le périmètre du total', mentionAnimateurs(2) === 'animateurs inclus (2)');
+  verif('aucune mention quand il n’y a pas d’animateur', mentionAnimateurs(0) === undefined);
+  verif('aucune mention sur un compte négatif', mentionAnimateurs(-1) === undefined);
+}
+
+// ============================================================================
+// Libellés de rôle : l'écran d'attribution doit distinguer co de co_paroissial,
+// sinon l'Admin voit deux entrées identiques et ne peut pas choisir.
+// ============================================================================
+{
+  console.log('\n▶ Libellés des rôles');
+  const libellesAdmin = Object.values(ROLE_LABELS_ADMIN);
+  verif(
+    'aucun libellé en double dans l’écran d’administration',
+    new Set(libellesAdmin).size === libellesAdmin.length,
+    libellesAdmin.join(' | ')
+  );
+  verif(
+    'co et co_paroissial y sont distinguables',
+    ROLE_LABELS_ADMIN.co !== ROLE_LABELS_ADMIN.co_paroissial
+  );
+  verif(
+    'les 5 rôles sont proposés à l’attribution',
+    Object.keys(ROLE_LABELS_ADMIN).length === 5
+  );
+  verif(
+    'l’affichage courant garde le libellé commun (même fonction vue de la communauté)',
+    ROLE_LABELS.co === ROLE_LABELS.co_paroissial
+  );
+  verif(
+    'les deux tables couvrent exactement les mêmes rôles',
+    Object.keys(ROLE_LABELS).sort().join(',') ===
+      Object.keys(ROLE_LABELS_ADMIN).sort().join(',')
+  );
+}
+
+// ============================================================================
+// Tarifs : `Number(v) || defaut` était faux sur 0 et sur NaN.
+// ============================================================================
+{
+  console.log('\n▶ Lecture des tarifs (app_settings)');
+  verif('un tarif normal est conservé', montantParametre(50, 50) === 50);
+  verif('un tarif modifié est conservé', montantParametre(75, 50) === 75);
+  verif('un tarif à 0 est conservé (samedi offert)', montantParametre(0, 50) === 0);
+  verif('un paramètre absent retombe sur le défaut', montantParametre(undefined, 50) === 50);
+  verif('un paramètre null retombe sur le défaut', montantParametre(null, 100) === 100);
+  verif('une valeur non numérique retombe sur le défaut', montantParametre(Number('abc'), 100) === 100);
+  verif('Infinity retombe sur le défaut', montantParametre(Infinity, 50) === 50);
+  verif(
+    'le tarif Animateur par défaut est bien 100 F par samedi',
+    montantParametre(undefined, 100) === 100
+  );
 }
 
 // ============================================================================
