@@ -17,6 +17,8 @@ export interface Fraternite {
   id: string;
   nom: string;
   responsables: string[];
+  /** Identifiant réservé aux fraternités créées par le système. */
+  system_key?: 'animateur' | null;
   created_at: string;
 }
 

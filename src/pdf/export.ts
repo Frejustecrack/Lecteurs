@@ -301,6 +301,8 @@ export function exportCotisations(args: {
   lecteurs: Lecteur[];
   cotisations: Cotisation[];
   montantCot: number;
+  montantAnimateur?: number;
+  animateurFraterniteId?: string | null;
   auteur: string;
   /** Samedis à exporter (ISO). Par défaut : tous les samedis du mois. */
   samedis?: string[];
@@ -338,7 +340,10 @@ export function exportCotisations(args: {
       du += 1;
       return 'Dû';
     });
-    return [l.matricule, l.nom.toUpperCase(), l.prenom, ...cells, fmtMoney(paye), fmtMoney(du * montantCot)];
+    const tarif = l.fraternite_id === args.animateurFraterniteId
+      ? (args.montantAnimateur ?? montantCot)
+      : montantCot;
+    return [l.matricule, l.nom.toUpperCase(), l.prenom, ...cells, fmtMoney(paye), fmtMoney(du * tarif)];
   });
 
   table(doc, {

@@ -6,7 +6,7 @@ import { toutesLesLignes } from '../lib/pagination';
 import { useRealtime } from '../lib/useRealtime';
 import { useAuth } from '../context/AuthContext';
 import { traduireErreur } from '../lib/errors';
-import { peutGererLecteurs, type Fraternite, type Lecteur } from '../lib/types';
+import { estAdmin, peutGererLecteurs, type Fraternite, type Lecteur } from '../lib/types';
 import {
   Badge,
   BtnGhost,
@@ -24,7 +24,8 @@ import {
 export default function Fraternites() {
   const { profile } = useAuth();
   const canEdit = peutGererLecteurs(profile?.role);
-  const canDelete = !!profile?.role; // tout utilisateur connecté peut supprimer une fraternité vide
+  const canDeleteOrdinaire = !!profile?.role; // toute fraternité ordinaire vide
+  const canDeleteSpeciale = estAdmin(profile?.role);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -39,13 +40,12 @@ export default function Fraternites() {
 
   const load = useCallback(async () => {
     const [rF, rL] = await Promise.all([
-      supabase.from('fraternites').select('id, nom, responsables').order('nom'),
+      supabase.from('fraternites').select('id, nom, responsables, system_key').order('nom'),
       // 200 max : colonnes minimales, pas de select * (60% de gain)
       toutesLesLignes<Lecteur>((de, a) =>
         supabase
           .from('lecteurs')
           .select('id, matricule, nom, prenom, fraternite_id, archived')
-          .eq('archived', false)
           .order('nom').order('prenom').order('matricule')
           .range(de, a)
       ),
@@ -148,6 +148,7 @@ export default function Fraternites() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {fraternites.map((f) => {
             const membres = lecteurs.filter((l) => l.fraternite_id === f.id);
+            const canDelete = f.system_key === 'animateur' ? canDeleteSpeciale : canDeleteOrdinaire;
             return (
               <div
                 key={f.id}
@@ -158,6 +159,7 @@ export default function Fraternites() {
                     <h3 className="font-bold text-slate-800">{f.nom}</h3>
                     <div className="mt-1 flex flex-wrap gap-1">
                       <Badge tone="blue">{membres.length} lecteur(s)</Badge>
+                      {f.system_key === 'animateur' && <Badge tone="amber">Système · tarif spécial</Badge>}
                     </div>
                   </div>
                   {(canEdit || canDelete) && (

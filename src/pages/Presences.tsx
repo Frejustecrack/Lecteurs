@@ -128,7 +128,7 @@ export default function Presences() {
   }, [load]);
 
   // Synchronisation temps réel : toute modification de présence est reflétée immédiatement
-  useRealtime('realtime-presences', ['presences'], load);
+  useRealtime('realtime-presences', ['presences', 'lecteurs', 'fraternites'], load);
 
   const map = useMemo(() => {
     const m = new Map<string, Presence>();

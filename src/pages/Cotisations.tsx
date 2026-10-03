@@ -66,6 +66,7 @@ export default function Cotisations() {
   const [fraternites, setFraternites] = useState<Fraternite[]>([]);
   const [cotisations, setCotisations] = useState<Cotisation[]>([]);
   const [montantCot, setMontantCot] = useState(50);
+  const [montantAnimateur, setMontantAnimateur] = useState(100);
   const [loading, setLoading] = useState(true);
   const [busyPdf, setBusyPdf] = useState(false);
   const [celluleActive, setCelluleActive] = useState<string | null>(null);
@@ -85,11 +86,15 @@ export default function Cotisations() {
   const periodeLabel =
     mode === 'semaine' ? semaineLabel(semaine) : moisLabel(annee, mois);
 
-  /** Seuls les samedis déjà arrivés génèrent une cotisation due. */
+  /**
+   * Tous les samedis affichés peuvent être réglés, y compris à l'avance.
+   * Seuls les samedis déjà arrivés et impayés sont toutefois comptés comme dus.
+   */
   const samedisArrivesListe = useMemo(
     () => samedis.filter(samediEstArrive),
     [samedis]
   );
+  const samedisCotisables = samedis;
 
   const [busyBulk, setBusyBulk] = useState(false);
 
@@ -103,12 +108,19 @@ export default function Cotisations() {
           .order('nom').order('prenom').order('matricule')
           .range(de, a)
       ),
-      supabase.from('fraternites').select('id, nom').order('nom'),
-      supabase.from('app_settings').select('value').eq('key', 'montant_cotisation').maybeSingle(),
+      supabase.from('fraternites').select('id, nom, system_key').order('nom'),
+      supabase.from('app_settings').select('key, value').in('key', ['montant_cotisation', 'montant_cotisation_animateur']),
     ]);
+    const erreurPrincipale = rL.error || rF.error || rSet.error;
+    if (erreurPrincipale) {
+      toast(traduireErreur(erreurPrincipale, 'charger les cotisations'), 'err');
+      return;
+    }
     setLecteurs(trierLecteurs((rL.data ?? []) as Lecteur[]));
     setFraternites((rF.data ?? []) as Fraternite[]);
-    if (rSet.data) setMontantCot(Number(rSet.data.value) || 50);
+    const settings = new Map((rSet.data ?? []).map((s) => [s.key, Number(s.value)]));
+    setMontantCot(settings.get('montant_cotisation') || 50);
+    setMontantAnimateur(settings.get('montant_cotisation_animateur') || 100);
 
     if (samedis.length > 0) {
       // 200 lecteurs × 5 samedis = 1 000 lignes : la limite PostgREST. Paginé.
@@ -121,12 +133,15 @@ export default function Cotisations() {
           .order('id')
           .range(de, a)
       );
+      if (rC.error) {
+        toast(traduireErreur(rC.error, 'charger les cotisations de la période'), 'err');
+        return;
+      }
       setCotisations((rC.data ?? []) as Cotisation[]);
     } else {
       setCotisations([]);
     }
-    setLoading(false);
-  }, [samedis]);
+  }, [samedis, toast]);
 
   useEffect(() => {
     setLoading(true);
@@ -134,13 +149,19 @@ export default function Cotisations() {
   }, [load]);
 
   // Synchronisation temps réel : toute modif de cotisation est reflétée immédiatement
-  useRealtime('realtime-cotisations', ['cotisations'], load);
+  useRealtime('realtime-cotisations', ['cotisations', 'fraternites', 'app_settings'], load);
 
   const map = useMemo(() => {
     const m = new Map<string, Cotisation>();
     cotisations.forEach((c) => m.set(`${c.lecteur_id}|${c.date_samedi}`, c));
     return m;
   }, [cotisations]);
+
+  const animateurId = fraternites.find((f) => f.system_key === 'animateur')?.id ?? null;
+  const tarifLecteur = useCallback(
+    (lecteur: Lecteur) => lecteur.fraternite_id === animateurId ? montantAnimateur : montantCot,
+    [animateurId, montantAnimateur, montantCot]
+  );
 
   const filtered = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
@@ -178,7 +199,7 @@ export default function Cotisations() {
         lecteur_id: l.id,
         date_samedi: sam,
         paye: nextPaye,
-        montant: nextPaye ? montantCot : 0,
+        montant: nextPaye ? tarifLecteur(l) : 0,
       },
       { onConflict: 'lecteur_id,date_samedi' }
     );
@@ -187,7 +208,7 @@ export default function Cotisations() {
       toast(traduireErreur(error, 'enregistrer cette cotisation'), 'err');
       return;
     }
-    toast(nextPaye ? `Cotisation enregistrée (${fmtMoney(montantCot)}).` : 'Cotisation marquée comme due.');
+    toast(nextPaye ? `Cotisation enregistrée (${fmtMoney(tarifLecteur(l))}).` : 'Cotisation marquée comme non payée.');
     load();
   }
 
@@ -196,21 +217,21 @@ export default function Cotisations() {
       toast('Réservé aux Caissiers.', 'err');
       return;
     }
-    if (samedisArrivesListe.length === 0) {
-      toast('Aucun samedi arrivé à marquer.', 'err');
+    if (samedisCotisables.length === 0) {
+      toast('Aucun samedi à marquer.', 'err');
       return;
     }
-    if (!confirm(`Marquer les cotisations de ${filtered.length} lecteur(s) comme ${paye ? 'payées' : 'dues'} ?`)) return;
+    if (!confirm(`Marquer les cotisations de ${filtered.length} lecteur(s) comme ${paye ? 'payées' : 'non payées'} ? Les samedis à venir de la vue sont inclus.`)) return;
     setBusyBulk(true);
     try {
       const payload = filtered.flatMap((l) =>
-        samedisArrivesListe
+        samedisCotisables
           .filter((sam) => !estAvantPremierSamediActif(sam, l.created_at))
           .map((sam) => ({
             lecteur_id: l.id,
             date_samedi: sam,
             paye,
-            montant: paye ? montantCot : 0,
+            montant: paye ? tarifLecteur(l) : 0,
           }))
       );
       for (let i = 0; i < payload.length; i += 200) {
@@ -218,7 +239,7 @@ export default function Cotisations() {
         const { error } = await supabase.from('cotisations').upsert(chunk, { onConflict: 'lecteur_id,date_samedi' });
         if (error) throw error;
       }
-      toast(`${filtered.length} lecteur(s) marqués ${paye ? 'payés' : 'dus'} sur leurs samedis actifs.`);
+      toast(`${filtered.length} lecteur(s) marqués ${paye ? 'payés' : 'non payés'} sur leurs samedis actifs.`);
       load();
     } catch (e) {
       toast(traduireErreur(e, 'marquer les cotisations en masse'), 'err');
@@ -242,13 +263,14 @@ export default function Cotisations() {
     0
   );
   /** Samedis arrivés et non réglés à partir du premier samedi actif — les samedis antérieurs ou à venir ne comptent pas. */
-  const nbDu = filtered.reduce(
-    (s, l) =>
-      s +
-      samedisArrivesListe.filter(
+  const { nbDu, totalDu } = filtered.reduce(
+    (totaux, l) => {
+      const nombre = samedisArrivesListe.filter(
         (sam) => !estAvantPremierSamediActif(sam, l.created_at) && !map.get(`${l.id}|${sam}`)?.paye
-      ).length,
-    0
+      ).length;
+      return { nbDu: totaux.nbDu + nombre, totalDu: totaux.totalDu + nombre * tarifLecteur(l) };
+    },
+    { nbDu: 0, totalDu: 0 }
   );
 
   function allerPrecedent() {
@@ -284,7 +306,7 @@ export default function Cotisations() {
     <div>
       <PageHeader
         title="Cotisations"
-        sub={`${fmtMoney(montantCot)} par lecteur et par samedi — saisie réservée aux Caissiers`}
+        sub={`${fmtMoney(montantCot)} tarif normal · ${fmtMoney(montantAnimateur)} Animateur — saisie réservée aux Caissiers`}
         actions={
           peutExporter ? (
             <BtnGhost
@@ -300,6 +322,8 @@ export default function Cotisations() {
                     lecteurs: filtered,
                     cotisations,
                     montantCot,
+                    montantAnimateur,
+                    animateurFraterniteId: animateurId,
                     auteur: profile?.full_name ?? '—',
                     samedis,
                     periode: periodeLabel,
@@ -369,14 +393,14 @@ export default function Cotisations() {
         />
         <StatCard
           label="Cotisations dues (vue)"
-          value={fmtMoney(nbDu * montantCot)}
+          value={fmtMoney(totalDu)}
           tone="red"
           sub={`${nbDu} samedi(s) actif(s) non réglé(s)`}
         />
         <StatCard
           label="Samedis comptés"
           value={samedisArrivesListe.length}
-          sub={`${samedis.length} affiché(s) — à venir exclus`}
+          sub={`${samedis.length} affiché(s) — paiements anticipés autorisés`}
         />
         <StatCard
           label="Lecteurs (vue)"
@@ -407,7 +431,7 @@ export default function Cotisations() {
           aria-label="Rechercher un lecteur"
           className={`${inputCls} min-w-0 flex-1 sm:max-w-xs`}
         />
-        {isCaissier && filtered.length > 0 && samedisArrivesListe.length > 0 && (
+        {isCaissier && filtered.length > 0 && samedisCotisables.length > 0 && (
           <div className="flex w-full gap-2 sm:w-auto">
             <button
               onClick={() => marquerTous(true)}
@@ -421,7 +445,7 @@ export default function Cotisations() {
               disabled={busyBulk}
               className="flex-1 rounded-lg bg-white border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50 sm:flex-none"
             >
-              Tous dus
+              Tous non payés
             </button>
           </div>
         )}
@@ -457,7 +481,7 @@ export default function Cotisations() {
                       {l.prenom} {l.nom.toUpperCase()}
                     </Link>
                     <div className="mt-0.5 text-xs font-semibold text-slate-500">
-                      {paye > 0 ? fmtMoney(paye) + ' payé' : '—'} · {du > 0 ? fmtMoney(du * montantCot) + ' dû' : 'à jour'}
+                      {paye > 0 ? fmtMoney(paye) + ' payé' : '—'} · {du > 0 ? fmtMoney(du * tarifLecteur(l)) + ' dû' : 'à jour'}
                     </div>
                   </div>
                   <button
@@ -473,7 +497,7 @@ export default function Cotisations() {
                             ? 'Payé — cliquez pour repasser en dû'
                             : duCeSamedi
                               ? 'Dû — cliquez pour déclarer'
-                              : 'Samedi à venir'
+                              : 'Samedi à venir — cliquez pour enregistrer un paiement à l’avance'
                     }
                     className={`min-w-[72px] shrink-0 rounded-xl px-3 py-3 text-xs font-bold transition-all duration-150 active:scale-90 ${
                       neant
@@ -485,7 +509,7 @@ export default function Cotisations() {
                             : 'border border-dashed border-slate-300 text-slate-400'
                     } ${clickable ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
                   >
-                    {neant ? 'Néant' : c?.paye ? `${c.montant} F ✓` : duCeSamedi ? 'dû' : '—'}
+                    {neant ? 'Néant' : c?.paye ? `${c.montant} F ✓` : duCeSamedi ? 'dû' : arrive ? '—' : 'avance'}
                   </button>
                 </li>
               );
@@ -559,7 +583,7 @@ export default function Cotisations() {
                                     ? 'Payé — cliquez pour repasser en dû'
                                     : duCeSamedi
                                       ? 'Dû — cliquez pour déclarer le paiement'
-                                      : 'Samedi à venir — pas encore comptabilisé'
+                                      : 'Samedi à venir — cliquez pour enregistrer un paiement à l’avance'
                             }
                             className={`min-w-[52px] rounded-md px-2 py-1.5 text-xs font-bold transition-all duration-150 active:scale-90 ${
                               neant
@@ -575,7 +599,7 @@ export default function Cotisations() {
                                 : 'cursor-default'
                             }`}
                           >
-                            {neant ? 'Néant' : c?.paye ? `${c.montant} F ✓` : duCeSamedi ? 'dû' : '—'}
+                            {neant ? 'Néant' : c?.paye ? `${c.montant} F ✓` : duCeSamedi ? 'dû' : arrive ? '—' : 'avance'}
                           </button>
                         </td>
                       );
@@ -584,7 +608,7 @@ export default function Cotisations() {
                       {fmtMoney(paye)}
                     </td>
                     <td className="whitespace-nowrap px-2 py-2 text-right text-xs font-bold text-alerte">
-                      {fmtMoney(du * montantCot)}
+                      {fmtMoney(du * tarifLecteur(l))}
                     </td>
                   </tr>
                 );
@@ -652,7 +676,7 @@ export default function Cotisations() {
                                     ? 'Payé — cliquez pour repasser en dû'
                                     : duCeSamedi
                                       ? 'Dû — cliquez pour déclarer le paiement'
-                                      : 'Samedi à venir — pas encore comptabilisé'
+                                      : 'Samedi à venir — cliquez pour enregistrer un paiement à l’avance'
                             }
                             className={`min-w-[52px] rounded-md px-2 py-1.5 text-xs font-bold transition-all duration-150 active:scale-90 ${
                               neant
@@ -664,13 +688,13 @@ export default function Cotisations() {
                                     : 'border border-dashed border-slate-300 text-slate-400'
                             } ${clickable ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
                           >
-                            {neant ? 'Néant' : c?.paye ? `${c.montant} F ✓` : duCeSamedi ? 'dû' : '—'}
+                            {neant ? 'Néant' : c?.paye ? `${c.montant} F ✓` : duCeSamedi ? 'dû' : arrive ? '—' : 'avance'}
                           </button>
                         </td>
                       );
                     })}
                     <td className="whitespace-nowrap px-2 py-2 text-right text-xs font-bold text-emerald-600">{fmtMoney(paye)}</td>
-                    <td className="whitespace-nowrap px-2 py-2 text-right text-xs font-bold text-alerte">{fmtMoney(du * montantCot)}</td>
+                    <td className="whitespace-nowrap px-2 py-2 text-right text-xs font-bold text-alerte">{fmtMoney(du * tarifLecteur(l))}</td>
                   </tr>
                 );
               })}
@@ -684,8 +708,7 @@ export default function Cotisations() {
         Par défaut, un samedi arrivé actif est <strong className="text-alerte">dû</strong> :
         tant que le Caissier n'a pas basculé la case au vert, le lecteur est
         considéré comme n'ayant pas payé. L'absence ne dispense pas du paiement.
-        Les samedis à venir ne sont pas comptabilisés. Les mois passés restent
-        conservés et consultables.
+        Les samedis à venir ne génèrent pas encore de dû, mais le Caissier peut y enregistrer un paiement à l'avance. Les mois passés restent conservés et consultables.
       </p>
     </div>
   );
