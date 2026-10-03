@@ -22,6 +22,7 @@ import {
   type Cotisation,
   type Evenement,
   type Fraternite,
+  estCOParoissial,
   type Grade,
   type Lecteur,
   type LecteurGrade,
@@ -302,7 +303,10 @@ export default function LecteurProfil() {
 
   const animateurId = fraternites.find((f) => f.system_key === 'animateur')?.id ?? null;
   const estMembreAnimateur = l.fraternite_id === animateurId;
-  const peutGererAnimateur = profile?.role === 'co_paroissial';
+  // Même règle que la base (migration 20261003220000) et que l'écran
+  // Fraternités : entrer dans « Animateur » ou en sortir est réservé au CO
+  // paroissial, car cela recalcule l'historique des cotisations payées.
+  const peutGererAnimateur = estCOParoissial(profile?.role);
 
   async function changerGrade() {
     if (!l) return;

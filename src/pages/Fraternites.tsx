@@ -1,12 +1,19 @@
-import { trierLecteurs } from '../lib/lecteurs';
-import { useCallback, useEffect, useState } from 'react';
+import { rechercherLecteurs, trierLecteurs } from '../lib/lecteurs';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { toutesLesLignes } from '../lib/pagination';
 import { useRealtime } from '../lib/useRealtime';
+import { useDebounce } from '../lib/useDebounce';
 import { useAuth } from '../context/AuthContext';
 import { traduireErreur } from '../lib/errors';
-import { estAdmin, peutGererLecteurs, type Fraternite, type Lecteur } from '../lib/types';
+import {
+  estAdmin,
+  peutGererLecteurs,
+  peutGererMembresFraternite,
+  type Fraternite,
+  type Lecteur,
+} from '../lib/types';
 import {
   Badge,
   BtnGhost,
@@ -37,6 +44,14 @@ export default function Fraternites() {
   const [form, setForm] = useState({ nom: '', responsables: '' });
   const [busy, setBusy] = useState(false);
   const [busySuppr, setBusySuppr] = useState<string | null>(null);
+
+  // --- Gestion des membres (ajout / retrait depuis la fiche de fraternité)
+  const [membresId, setMembresId] = useState<string | null>(null);
+  const [recherche, setRecherche] = useState('');
+  const rechercheDebounce = useDebounce(recherche, 300);
+  const [selection, setSelection] = useState<string[]>([]);
+  const [busyMembres, setBusyMembres] = useState(false);
+  const [busyRetrait, setBusyRetrait] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [rF, rL] = await Promise.all([
@@ -132,6 +147,121 @@ export default function Fraternites() {
     }
   }
 
+  // ------------------------------------------------------------- membres
+  const fratMembres = fraternites.find((f) => f.id === membresId) ?? null;
+
+  /** Membres actuels : archivés exclus, ils ne se gèrent que depuis leur fiche. */
+  const membresActuels = useMemo(
+    () =>
+      membresId
+        ? lecteurs.filter((l) => l.fraternite_id === membresId && !l.archived)
+        : [],
+    [lecteurs, membresId]
+  );
+
+  /**
+   * Candidats à l'ajout : lecteurs actifs qui ne sont pas déjà dans cette
+   * fraternité. Ceux qui appartiennent à une AUTRE fraternité restent
+   * proposés — les y ajouter revient à les déplacer, ce que la base fait en
+   * une seule opération journalisée.
+   */
+  const candidats = useMemo(() => {
+    if (!membresId) return [];
+    const actifs = lecteurs.filter(
+      (l) => !l.archived && l.fraternite_id !== membresId
+    );
+    const q = rechercheDebounce.trim();
+    return q ? rechercherLecteurs(actifs, q) : trierLecteurs(actifs);
+  }, [lecteurs, membresId, rechercheDebounce]);
+
+  function ouvrirMembres(f: Fraternite) {
+    setMembresId(f.id);
+    setRecherche('');
+    setSelection([]);
+  }
+
+  function fermerMembres() {
+    setMembresId(null);
+    setRecherche('');
+    setSelection([]);
+  }
+
+  function basculerSelection(lecteurId: string) {
+    setSelection((s) =>
+      s.includes(lecteurId) ? s.filter((x) => x !== lecteurId) : [...s, lecteurId]
+    );
+  }
+
+  /**
+   * Applique une série de rattachements via `changer_fraternite`
+   * (SECURITY DEFINER) : la base valide la cible, applique la règle
+   * « Animateur réservé au CO paroissial », recalcule l'historique des
+   * cotisations si nécessaire et journalise chaque mouvement.
+   *
+   * Les appels sont séquentiels et non transactionnels : on rend compte
+   * précisément de ce qui est passé et de ce qui a été refusé plutôt que de
+   * laisser croire à un succès global.
+   */
+  async function appliquerRattachements(
+    ids: string[],
+    cible: string | null,
+    action: string
+  ): Promise<number> {
+    let faits = 0;
+    let premiereErreur: unknown = null;
+    for (const lecteurId of ids) {
+      const { error } = await supabase.rpc('changer_fraternite', {
+        p_lecteur: lecteurId,
+        p_fraternite: cible,
+      });
+      if (error) premiereErreur = premiereErreur ?? error;
+      else faits++;
+    }
+    if (premiereErreur) {
+      const echecs = ids.length - faits;
+      toast(
+        faits > 0
+          ? `${faits} lecteur(s) traité(s), ${echecs} refusé(s) : ${traduireErreur(premiereErreur, action)}`
+          : traduireErreur(premiereErreur, action),
+        'err'
+      );
+    }
+    if (faits > 0) await load();
+    return faits;
+  }
+
+  async function ajouterSelection() {
+    if (!fratMembres || selection.length === 0) return;
+    setBusyMembres(true);
+    const faits = await appliquerRattachements(
+      selection,
+      fratMembres.id,
+      `ajouter ces lecteurs à « ${fratMembres.nom} »`
+    );
+    setBusyMembres(false);
+    if (faits > 0) {
+      toast(
+        `${faits} lecteur(s) ajouté(s) à « ${fratMembres.nom} ».`
+      );
+      setSelection([]);
+      setRecherche('');
+    }
+  }
+
+  async function retirerMembre(l: Lecteur) {
+    if (!fratMembres) return;
+    setBusyRetrait(l.id);
+    const faits = await appliquerRattachements(
+      [l.id],
+      null,
+      `retirer ${l.prenom} ${l.nom} de « ${fratMembres.nom} »`
+    );
+    setBusyRetrait(null);
+    if (faits > 0) {
+      toast(`${l.prenom} ${l.nom.toUpperCase()} n'appartient plus à aucune fraternité.`);
+    }
+  }
+
   if (loading) return <Spinner label="Chargement des fraternités…" />;
 
   return (
@@ -149,6 +279,9 @@ export default function Fraternites() {
           {fraternites.map((f) => {
             const membres = lecteurs.filter((l) => l.fraternite_id === f.id);
             const canDelete = f.system_key === 'animateur' ? canDeleteSpeciale : canDeleteOrdinaire;
+            // Admin, CO et CO paroissial gèrent toutes les fraternités ;
+            // « Animateur » reste réservée au CO paroissial (règle en base).
+            const canMembres = peutGererMembresFraternite(profile?.role, f.system_key);
             return (
               <div
                 key={f.id}
@@ -162,8 +295,16 @@ export default function Fraternites() {
                       {f.system_key === 'animateur' && <Badge tone="amber">Système · tarif spécial</Badge>}
                     </div>
                   </div>
-                  {(canEdit || canDelete) && (
-                    <div className="flex gap-2 text-xs font-semibold">
+                  {(canEdit || canDelete || canMembres) && (
+                    <div className="flex flex-wrap justify-end gap-2 text-xs font-semibold">
+                      {canMembres && (
+                        <button
+                          onClick={() => ouvrirMembres(f)}
+                          className={`text-cdlj hover:underline ${pressCls}`}
+                        >
+                          Membres
+                        </button>
+                      )}
                       {canEdit && (
                         <button
                           onClick={() => openEdit(f)}
@@ -223,6 +364,139 @@ export default function Fraternites() {
           })}
         </div>
       )}
+
+      {/* ------------------------------------------------- Membres */}
+      <Modal
+        open={!!fratMembres}
+        onClose={fermerMembres}
+        wide
+        title={fratMembres ? `Membres — ${fratMembres.nom}` : 'Membres'}
+      >
+        {fratMembres && (
+          <div className="space-y-5">
+            {fratMembres.system_key === 'animateur' && (
+              <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
+                Fraternité système : tout mouvement d'entrée ou de sortie recalcule
+                l'historique des cotisations déjà payées du lecteur au tarif
+                correspondant.
+              </p>
+            )}
+
+            {/* ---- Membres actuels */}
+            <section>
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Membres actuels ({membresActuels.length})
+              </h4>
+              {membresActuels.length === 0 ? (
+                <p className="mt-2 text-sm text-slate-500">
+                  Aucun lecteur actif dans cette fraternité.
+                </p>
+              ) : (
+                <ul className="mt-2 max-h-56 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
+                  {membresActuels.map((l) => (
+                    <li
+                      key={l.id}
+                      className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
+                    >
+                      <span className="min-w-0 truncate">
+                        <span className="font-mono text-xs text-cdlj">{l.matricule}</span>{' '}
+                        {l.prenom} {l.nom.toUpperCase()}
+                      </span>
+                      <button
+                        onClick={() => retirerMembre(l)}
+                        disabled={busyRetrait === l.id || busyMembres}
+                        className={`shrink-0 text-xs font-semibold text-alerte hover:underline disabled:opacity-50 ${pressCls}`}
+                      >
+                        {busyRetrait === l.id ? 'Retrait…' : 'Retirer'}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            {/* ---- Ajout */}
+            <section>
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Ajouter des lecteurs
+              </h4>
+              <input
+                className={`${inputCls} mt-2`}
+                value={recherche}
+                onChange={(e) => setRecherche(e.target.value)}
+                placeholder="Rechercher par nom, prénom ou matricule…"
+                aria-label="Rechercher un lecteur à ajouter"
+              />
+              {candidats.length === 0 ? (
+                <p className="mt-2 text-sm text-slate-500">
+                  Aucun lecteur actif ne correspond.
+                </p>
+              ) : (
+                <ul className="mt-2 max-h-56 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
+                  {candidats.map((l) => {
+                    const origine = fraternites.find((f) => f.id === l.fraternite_id);
+                    // Sortir d'« Animateur » est aussi réservé au CO paroissial
+                    // que d'y entrer : on désactive plutôt que d'échouer en base.
+                    const deplacable = peutGererMembresFraternite(
+                      profile?.role,
+                      origine?.system_key ?? null
+                    );
+                    return (
+                      <li key={l.id} className="px-3 py-2 text-sm">
+                        <label
+                          className={`flex items-center gap-3 ${
+                            deplacable ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 shrink-0 accent-cdlj"
+                            checked={selection.includes(l.id)}
+                            disabled={!deplacable || busyMembres}
+                            onChange={() => basculerSelection(l.id)}
+                          />
+                          <span className="min-w-0 flex-1 truncate">
+                            <span className="font-mono text-xs text-cdlj">
+                              {l.matricule}
+                            </span>{' '}
+                            {l.prenom} {l.nom.toUpperCase()}
+                          </span>
+                          {origine && (
+                            <span className="shrink-0 text-xs text-slate-400">
+                              {deplacable
+                                ? `déplacé depuis ${origine.nom}`
+                                : `${origine.nom} — réservé au CO paroissial`}
+                            </span>
+                          )}
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
+
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <span className="text-xs text-slate-500">
+                {selection.length > 0
+                  ? `${selection.length} lecteur(s) sélectionné(s)`
+                  : 'Aucune sélection'}
+              </span>
+              <div className="flex gap-2">
+                <BtnGhost onClick={fermerMembres}>Fermer</BtnGhost>
+                <BtnPrimary
+                  onClick={ajouterSelection}
+                  busy={busyMembres}
+                  busyLabel="Ajout…"
+                  disabled={selection.length === 0}
+                >
+                  Ajouter à « {fratMembres.nom} »
+                </BtnPrimary>
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal
         open={formOpen}

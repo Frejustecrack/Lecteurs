@@ -37,7 +37,14 @@ import {
   filtrerRecaps,
   trierRecaps,
 } from '../src/lib/recap.ts';
-import type { Lecteur } from '../src/lib/types.ts';
+import {
+  estCO,
+  estCOParoissial,
+  peutDeplacerEntreFraternites,
+  peutGererMembresFraternite,
+  type Lecteur,
+  type Role,
+} from '../src/lib/types.ts';
 import { creerPlanificateur } from '../src/lib/planificateur.ts';
 import { toutesLesLignes } from '../src/lib/pagination.ts';
 
@@ -613,6 +620,77 @@ console.log('\n── Temps réel : regroupement et non-superposition des rechar
   await avancer(100); await tick();
   eq('une erreur est remontée à onErreur', erreurs.length, 1);
   eq('le rechargement suivant a bien lieu malgré l\'erreur précédente', n, 2);
+}
+
+// ============================================================================
+// Gestion des membres d'une fraternité.
+//
+// L'interface doit refléter EXACTEMENT ce que la base autorise :
+//  - `changer_fraternite` (20260914150600) est ouverte à tout compte connecté ;
+//  - sauf pour « Animateur », réservée au seul `co_paroissial`
+//    (20261003220000 : `current_role() is distinct from 'co_paroissial'`).
+// ============================================================================
+{
+  console.log('\n▶ Membres de fraternité — droits par rôle');
+  const tousRoles: Role[] = ['admin', 'co', 'co_paroissial', 'caissier', 'responsable'];
+
+  // --- Fraternité ordinaire : ouverte à tous les rôles connectés.
+  for (const role of tousRoles) {
+    verif(
+      `${role} peut gérer les membres d'une fraternité ordinaire`,
+      peutGererMembresFraternite(role, null)
+    );
+  }
+  verif(
+    'un compte sans rôle ne gère aucun membre',
+    !peutGererMembresFraternite(null, null) &&
+      !peutGererMembresFraternite(undefined, null)
+  );
+
+  // --- Fraternité système « Animateur » : CO paroissial uniquement.
+  verif(
+    'co_paroissial peut gérer les membres d’Animateur',
+    peutGererMembresFraternite('co_paroissial', 'animateur')
+  );
+  for (const role of tousRoles.filter((r) => r !== 'co_paroissial')) {
+    verif(
+      `${role} ne peut PAS gérer les membres d’Animateur`,
+      !peutGererMembresFraternite(role, 'animateur')
+    );
+  }
+
+  // --- `co` et `co_paroissial` restent des alias PARTOUT AILLEURS : la
+  //     distinction ne doit exister que sur la fraternité système.
+  verif(
+    'co et co_paroissial restent des alias pour estCO()',
+    estCO('co') && estCO('co_paroissial')
+  );
+  verif(
+    'estCOParoissial() ne reconnaît que co_paroissial',
+    estCOParoissial('co_paroissial') && !estCOParoissial('co') && !estCOParoissial('admin')
+  );
+
+  // --- Déplacement : les DEUX extrémités comptent (entrer ET sortir).
+  verif(
+    'co_paroissial peut déplacer un lecteur d’Animateur vers une ordinaire',
+    peutDeplacerEntreFraternites('co_paroissial', 'animateur', null)
+  );
+  verif(
+    'co_paroissial peut déplacer un lecteur vers Animateur',
+    peutDeplacerEntreFraternites('co_paroissial', null, 'animateur')
+  );
+  verif(
+    'le CO (non paroissial) ne peut pas SORTIR un lecteur d’Animateur',
+    !peutDeplacerEntreFraternites('co', 'animateur', null)
+  );
+  verif(
+    'l’Admin ne peut pas sortir un lecteur d’Animateur (règle base)',
+    !peutDeplacerEntreFraternites('admin', 'animateur', null)
+  );
+  verif(
+    'le CO déplace librement entre deux fraternités ordinaires',
+    peutDeplacerEntreFraternites('co', null, null)
+  );
 }
 
 // ============================================================================
