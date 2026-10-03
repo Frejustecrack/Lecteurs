@@ -22,6 +22,12 @@ import {
   semaineLabel,
 } from '../lib/dates';
 import { useDebounce } from '../lib/useDebounce';
+import {
+  filtrerParFraternite,
+  idFraterniteAnimateur,
+  libelleVueGlobale,
+  vueAnimateurs,
+} from '../lib/fraternites';
 import { montantParametre } from '../lib/validation';
 import { traduireErreur } from '../lib/errors';
 import { journaliserExport } from '../lib/journal';
@@ -158,16 +164,19 @@ export default function Cotisations() {
     return m;
   }, [cotisations]);
 
-  const animateurId = fraternites.find((f) => f.system_key === 'animateur')?.id ?? null;
+  const animateurId = idFraterniteAnimateur(fraternites);
+  const estVueAnimateurs = vueAnimateurs(fId, animateurId);
   const tarifLecteur = useCallback(
     (lecteur: Lecteur) => lecteur.fraternite_id === animateurId ? montantAnimateur : montantCot,
     [animateurId, montantAnimateur, montantCot]
   );
 
+  // Les animateurs sont exclus de la vue globale : tarif distinct et rôle
+  // distinct, les mélanger fausserait l'effectif et le total dû affichés.
+  // Ils réapparaissent dès que leur fraternité est choisie dans le filtre.
   const filtered = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
-    return lecteurs.filter((l) => {
-      if (fId && l.fraternite_id !== fId) return false;
+    return filtrerParFraternite(lecteurs, fId, animateurId).filter((l) => {
       if (!q) return true;
       return (
         l.matricule.toLowerCase().includes(q) ||
@@ -175,7 +184,7 @@ export default function Cotisations() {
         l.prenom.toLowerCase().includes(q)
       );
     });
-  }, [lecteurs, fId, debouncedSearch]);
+  }, [lecteurs, fId, animateurId, debouncedSearch]);
 
   async function toggle(l: Lecteur, sam: string) {
     if (estAvantPremierSamediActif(sam, l.created_at)) {
@@ -320,6 +329,7 @@ export default function Cotisations() {
                     annee,
                     mois,
                     fraternite: fraternites.find((f) => f.id === fId)?.nom ?? null,
+                    horsAnimateurs: !fId && animateurId !== null,
                     lecteurs: filtered,
                     cotisations,
                     montantCot,
@@ -418,13 +428,18 @@ export default function Cotisations() {
           aria-label="Filtrer par fraternité"
           className={`${inputCls} w-full sm:w-auto`}
         >
-          <option value="">Vue globale — toutes les fraternités</option>
+          <option value="">{libelleVueGlobale(animateurId)}</option>
           {fraternites.map((f) => (
             <option key={f.id} value={f.id}>
               {f.nom}
             </option>
           ))}
         </select>
+        {estVueAnimateurs && (
+          <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+            Vue animateurs — {fmtMoney(montantAnimateur)} / samedi
+          </span>
+        )}
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}

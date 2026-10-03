@@ -48,6 +48,12 @@ import {
   type Lecteur,
   type Role,
 } from '../src/lib/types.ts';
+import {
+  filtrerParFraternite,
+  idFraterniteAnimateur,
+  libelleVueGlobale,
+  vueAnimateurs,
+} from '../src/lib/fraternites.ts';
 import { creerPlanificateur } from '../src/lib/planificateur.ts';
 import { toutesLesLignes } from '../src/lib/pagination.ts';
 
@@ -693,6 +699,73 @@ console.log('\n── Temps réel : regroupement et non-superposition des rechar
   verif(
     'le CO déplace librement entre deux fraternités ordinaires',
     peutDeplacerEntreFraternites('co', null, null)
+  );
+}
+
+// ============================================================================
+// Vues Présences / Cotisations : les animateurs sont hors de la vue globale.
+// ============================================================================
+{
+  console.log('\n▶ Vue globale — exclusion des animateurs');
+  const frats = [
+    { id: 'f-anim', system_key: 'animateur' as const },
+    { id: 'f-jean', system_key: null },
+    { id: 'f-luc', system_key: null },
+  ];
+  const animateurId = idFraterniteAnimateur(frats);
+  verif('la fraternité Animateur est identifiée par son marqueur', animateurId === 'f-anim');
+
+  const peuple = [
+    { nom: 'A', fraternite_id: 'f-anim' },
+    { nom: 'B', fraternite_id: 'f-anim' },
+    { nom: 'C', fraternite_id: 'f-jean' },
+    { nom: 'D', fraternite_id: 'f-luc' },
+    { nom: 'E', fraternite_id: null },
+  ];
+
+  const global = filtrerParFraternite(peuple, '', animateurId);
+  verif('vue globale : les animateurs sont exclus', global.every((l) => l.fraternite_id !== 'f-anim'));
+  verif('vue globale : tous les autres sont conservés', global.length === 3);
+  verif(
+    'vue globale : un lecteur sans fraternité reste visible',
+    global.some((l) => l.nom === 'E')
+  );
+
+  const vueAnim = filtrerParFraternite(peuple, 'f-anim', animateurId);
+  verif('filtre Animateur : seuls les animateurs apparaissent', vueAnim.length === 2);
+  verif(
+    'filtre Animateur : ce sont bien les bons',
+    vueAnim.map((l) => l.nom).join('') === 'AB'
+  );
+
+  const vueJean = filtrerParFraternite(peuple, 'f-jean', animateurId);
+  verif('filtre ordinaire : inchangé', vueJean.length === 1 && vueJean[0].nom === 'C');
+
+  // Aucune fraternité désignée : la vue globale redevient exhaustive.
+  const sansMarqueur = idFraterniteAnimateur([
+    { id: 'f-jean', system_key: null },
+    { id: 'f-anim', system_key: null },
+  ]);
+  verif('sans désignation, aucun identifiant animateur', sansMarqueur === null);
+  verif(
+    'sans désignation, la vue globale montre tout le monde',
+    filtrerParFraternite(peuple, '', sansMarqueur).length === 5
+  );
+
+  verif('le filtre ne modifie jamais le tableau source', peuple.length === 5);
+
+  verif('vueAnimateurs() détecte la vue dédiée', vueAnimateurs('f-anim', animateurId));
+  verif('vueAnimateurs() est faux en vue globale', !vueAnimateurs('', animateurId));
+  verif('vueAnimateurs() est faux sur une autre fraternité', !vueAnimateurs('f-jean', animateurId));
+  verif('vueAnimateurs() est faux sans désignation', !vueAnimateurs('', null));
+
+  verif(
+    'le libellé global annonce l’exclusion quand elle a lieu',
+    libelleVueGlobale(animateurId).includes('sauf les animateurs')
+  );
+  verif(
+    'le libellé global reste neutre sans désignation',
+    libelleVueGlobale(null) === 'Vue globale — toutes les fraternités'
   );
 }
 

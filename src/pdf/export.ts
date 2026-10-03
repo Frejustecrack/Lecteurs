@@ -304,6 +304,12 @@ export function exportCotisations(args: {
   montantAnimateur?: number;
   animateurFraterniteId?: string | null;
   auteur: string;
+  /**
+   * Vrai lorsque la vue globale exclut les animateurs. Le sous-titre doit le
+   * dire : un document officiel dont le périmètre est tu est trompeur.
+   */
+  horsAnimateurs?: boolean;
+
   /** Samedis à exporter (ISO). Par défaut : tous les samedis du mois. */
   samedis?: string[];
   /** Libellé de période (vue hebdomadaire, samedi précis…). */
@@ -317,7 +323,7 @@ export function exportCotisations(args: {
   const y = entete(
     doc,
     'Fiche des cotisations',
-    `${args.periode ?? moisLabel(annee, mois)}${fraternite ? ` — ${fraternite}` : ' — Vue globale'}`,
+    `${args.periode ?? moisLabel(annee, mois)}${fraternite ? ` — ${fraternite}` : args.horsAnimateurs ? ' — Vue globale (hors animateurs)' : ' — Vue globale'}`,
     auteur
   );
 
@@ -384,6 +390,12 @@ export function exportPresences(args: {
   lecteurs: Lecteur[];
   presences: Presence[];
   auteur: string;
+  /**
+   * Vrai lorsque la vue globale exclut les animateurs. Le sous-titre doit le
+   * dire : un document officiel dont le périmètre est tu est trompeur.
+   */
+  horsAnimateurs?: boolean;
+
   /** Samedis à exporter (ISO). Par défaut : tous les samedis du mois. */
   samedis?: string[];
   /** Libellé de période (vue hebdomadaire, samedi précis…). */
@@ -397,7 +409,7 @@ export function exportPresences(args: {
   const y = entete(
     doc,
     'Fiche des présences',
-    `${args.periode ?? moisLabel(annee, mois)}${fraternite ? ` — ${fraternite}` : ' — Vue globale'}`,
+    `${args.periode ?? moisLabel(annee, mois)}${fraternite ? ` — ${fraternite}` : args.horsAnimateurs ? ' — Vue globale (hors animateurs)' : ' — Vue globale'}`,
     auteur
   );
 
