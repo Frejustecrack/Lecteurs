@@ -21,6 +21,7 @@ import {
   type Appreciation,
   type Cotisation,
   type Evenement,
+  type Fraternite,
   type Grade,
   type Lecteur,
   type LecteurGrade,
@@ -129,7 +130,7 @@ export default function LecteurProfil() {
     adresse: '',
     contact_parent: '',
   });
-  const [fraternites, setFraternites] = useState<{ id: string; nom: string }[]>([]);
+  const [fraternites, setFraternites] = useState<Fraternite[]>([]);
 
   /** Fraternité en cours de sélection (carte visible à tous les rôles). */
   const [fratSel, setFratSel] = useState('');
@@ -148,6 +149,7 @@ export default function LecteurProfil() {
 
   const load = useCallback(async () => {
     if (!id) return;
+    setLoading(true);
     // Optimisé 200 : selects minimaux, évite select * sur 52 samedis + évite in() overflow via jointure
     const [rL, rG, rH, rP, rC, rPartJoin, rA, rProf, rSet, rPerm] = await Promise.all([
       supabase.from('lecteurs').select('*').eq('id', id).maybeSingle(),
@@ -177,13 +179,20 @@ export default function LecteurProfil() {
         .select('id, nature, motif, created_by, created_at, deleted')
         .eq('lecteur_id', id),
       supabase.from('profiles').select('id, full_name'),
-      supabase.from('app_settings').select('value').eq('key', 'montant_cotisation').maybeSingle(),
+      supabase.from('app_settings').select('key, value').in('key', ['montant_cotisation', 'montant_cotisation_animateur']),
       supabase
         .from('permissions')
         .select('id, lecteur_id, type_permission, samedis, motif, created_by, created_at')
         .eq('lecteur_id', id)
         .order('created_at', { ascending: false }),
     ]);
+    const erreurChargement = rL.error || rG.error || rH.error || rP.error || rC.error ||
+      rPartJoin.error || rA.error || rProf.error || rSet.error || rPerm.error;
+    if (erreurChargement) {
+      toast(traduireErreur(erreurChargement, 'charger la fiche du lecteur'), 'err');
+      setLoading(false);
+      return;
+    }
     const lecteur = (rL.data as Lecteur | null) ?? null;
     if (!lecteur) {
       navigate('/lecteurs');
@@ -197,16 +206,29 @@ export default function LecteurProfil() {
     setAprises((rA.data ?? []) as Appreciation[]);
     setPermissions((rPerm.data ?? []) as Permission[]);
     setProfiles((rProf.data ?? []) as Profile[]);
-    if (rSet.data) setMontantCot(Number(rSet.data.value) || 50);
 
+    type ParticipationJointe = { evenements: Evenement | null };
     const evs = (rPartJoin.data ?? [])
-      .map((r: any) => r.evenements)
-      .filter(Boolean) as Evenement[];
+      .map((r) => (r as unknown as ParticipationJointe).evenements)
+      .filter((evenement): evenement is Evenement => Boolean(evenement));
     setEvenements(evs.sort((a, b) => (a.date_evenement < b.date_evenement ? -1 : 1)));
-    const rF = await supabase.from('fraternites').select('id, nom').order('nom');
-    setFraternites((rF.data ?? []) as { id: string; nom: string }[]);
+    const rF = await supabase.from('fraternites').select('id, nom, responsables, system_key').order('nom');
+    if (rF.error) {
+      toast(traduireErreur(rF.error, 'charger les fraternités'), 'err');
+      setLoading(false);
+      return;
+    }
+    const fraternitesChargees = (rF.data ?? []) as Fraternite[];
+    setFraternites(fraternitesChargees);
+    const settings = new Map((rSet.data ?? []).map((s) => [s.key, Number(s.value)]));
+    const estAnimateur = fraternitesChargees.some(
+      (f) => f.id === lecteur.fraternite_id && f.system_key === 'animateur'
+    );
+    setMontantCot(estAnimateur
+      ? (settings.get('montant_cotisation_animateur') || 100)
+      : (settings.get('montant_cotisation') || 50));
     setLoading(false);
-  }, [id, navigate]);
+  }, [id, navigate, toast]);
 
   useEffect(() => {
     load();
@@ -218,6 +240,8 @@ export default function LecteurProfil() {
     { table: 'cotisations', filter: `lecteur_id=eq.${id}` },
     { table: 'lecteurs', event: 'UPDATE', filter: `id=eq.${id}` },
     { table: 'permissions', filter: `lecteur_id=eq.${id}` },
+    { table: 'fraternites' },
+    { table: 'app_settings' },
   ], load);
 
   // Le select de fraternité suit la fiche chargée (y compris après un
@@ -275,6 +299,10 @@ export default function LecteurProfil() {
   }, [presences, l]);
 
   if (loading || !l) return <Spinner label="Chargement de la fiche…" />;
+
+  const animateurId = fraternites.find((f) => f.system_key === 'animateur')?.id ?? null;
+  const estMembreAnimateur = l.fraternite_id === animateurId;
+  const peutGererAnimateur = profile?.role === 'co_paroissial';
 
   async function changerGrade() {
     if (!l) return;
@@ -564,13 +592,17 @@ export default function LecteurProfil() {
                   aria-label="Fraternité du lecteur"
                   className={inputCls}
                   value={fratSel}
-                  disabled={l.archived}
+                  disabled={l.archived || (estMembreAnimateur && !peutGererAnimateur)}
                   onChange={(e) => setFratSel(e.target.value)}
                 >
                   <option value="">— Aucune fraternité —</option>
                   {fraternites.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.nom}
+                    <option
+                      key={f.id}
+                      value={f.id}
+                      disabled={f.system_key === 'animateur' && !peutGererAnimateur}
+                    >
+                      {f.nom}{f.system_key === 'animateur' ? ' — tarif spécial' : ''}
                     </option>
                   ))}
                 </select>
@@ -579,7 +611,7 @@ export default function LecteurProfil() {
                 onClick={changerFraternite}
                 busy={busyFrat}
                 busyLabel="…"
-                disabled={l.archived || fratSel === (l.fraternite_id ?? '')}
+                disabled={l.archived || (estMembreAnimateur && !peutGererAnimateur) || fratSel === (l.fraternite_id ?? '')}
               >
                 Changer
               </BtnPrimary>
@@ -940,10 +972,17 @@ export default function LecteurProfil() {
               />
             </Field>
             <Field label="Fraternité">
-              <select className={inputCls} value={form.fraternite_id} onChange={(e) => setForm({ ...form, fraternite_id: e.target.value })}>
+              <select
+                className={inputCls}
+                value={form.fraternite_id}
+                disabled={estMembreAnimateur && !peutGererAnimateur}
+                onChange={(e) => setForm({ ...form, fraternite_id: e.target.value })}
+              >
                 <option value="">— aucune —</option>
                 {fraternites.map((f) => (
-                  <option key={f.id} value={f.id}>{f.nom}</option>
+                  <option key={f.id} value={f.id} disabled={f.system_key === 'animateur' && !peutGererAnimateur}>
+                    {f.nom}{f.system_key === 'animateur' ? ' — tarif spécial' : ''}
+                  </option>
                 ))}
               </select>
             </Field>

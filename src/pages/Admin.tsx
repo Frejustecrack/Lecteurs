@@ -27,6 +27,7 @@ export default function Admin() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [comptes, setComptes] = useState<Profile[]>([]);
   const [montantCot, setMontantCot] = useState('50');
+  const [montantAnimateur, setMontantAnimateur] = useState('100');
   const [loading, setLoading] = useState(true);
   const [qLog, setQLog] = useState('');
   const debouncedQLog = useDebounce(qLog, 300);
@@ -39,13 +40,14 @@ export default function Admin() {
       supabase.from('profiles').select('*').order('full_name'),
       supabase
         .from('app_settings')
-        .select('value')
-        .eq('key', 'montant_cotisation')
-        .maybeSingle(),
+        .select('key, value')
+        .in('key', ['montant_cotisation', 'montant_cotisation_animateur']),
     ]);
     setLogs((rL.data ?? []) as LogEntry[]);
     setComptes((rP.data ?? []) as Profile[]);
-    if (rS.data) setMontantCot(String(rS.data.value));
+    const settings = new Map((rS.data ?? []).map((s) => [s.key, String(s.value)]));
+    setMontantCot(settings.get('montant_cotisation') ?? '50');
+    setMontantAnimateur(settings.get('montant_cotisation_animateur') ?? '100');
     setLoading(false);
   }, []);
 
@@ -95,20 +97,22 @@ export default function Admin() {
   }
 
   async function saveMontant() {
-    const v = Number(montantCot);
-    if (!v || v <= 0) {
-      toast('Montant invalide.', 'err');
+    const normal = Number(montantCot);
+    const animateur = Number(montantAnimateur);
+    if (!Number.isInteger(normal) || normal <= 0 || !Number.isInteger(animateur) || animateur <= 0) {
+      toast('Les deux montants doivent être des nombres entiers supérieurs à zéro.', 'err');
       return;
     }
     setBusyMontant(true);
-    const { error } = await supabase
-      .from('app_settings')
-      .update({ value: String(v) })
-      .eq('key', 'montant_cotisation');
+    const [rNormal, rAnimateur] = await Promise.all([
+      supabase.from('app_settings').update({ value: String(normal) }).eq('key', 'montant_cotisation'),
+      supabase.from('app_settings').update({ value: String(animateur) }).eq('key', 'montant_cotisation_animateur'),
+    ]);
+    const error = rNormal.error || rAnimateur.error;
     setBusyMontant(false);
-    if (error) toast(traduireErreur(error, 'modifier le montant de la cotisation'), 'err');
+    if (error) toast(traduireErreur(error, 'modifier les montants de cotisation'), 'err');
     else {
-      toast(`Montant de la cotisation : ${v} F (modifié — tracé dans les logs).`);
+      toast(`Tarifs enregistrés : normal ${normal} F, Animateur ${animateur} F.`);
       load();
     }
   }
@@ -316,21 +320,25 @@ export default function Admin() {
 
       {tab === 'parametres' && (
         <div className="max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="mb-3 text-sm font-bold text-slate-700">
-            Montant de la cotisation hebdomadaire
-          </h3>
-          <div className="flex items-center gap-2">
-            <input
-              type="number"
-              className={`${inputCls} w-28`}
-              value={montantCot}
-              onChange={(e) => setMontantCot(e.target.value)}
-            />
-            <span className="text-sm text-slate-500">F CFA / lecteur / samedi</span>
+          <h3 className="mb-3 text-sm font-bold text-slate-700">Tarifs hebdomadaires</h3>
+          <div className="space-y-3">
+            <label className="block text-sm font-medium text-slate-600">
+              Tarif normal
+              <div className="mt-1 flex items-center gap-2">
+                <input type="number" min="1" className={`${inputCls} w-28`} value={montantCot} onChange={(e) => setMontantCot(e.target.value)} />
+                <span>F CFA / lecteur / samedi</span>
+              </div>
+            </label>
+            <label className="block text-sm font-medium text-slate-600">
+              Tarif fraternité Animateur
+              <div className="mt-1 flex items-center gap-2">
+                <input type="number" min="1" className={`${inputCls} w-28`} value={montantAnimateur} onChange={(e) => setMontantAnimateur(e.target.value)} />
+                <span>F CFA / lecteur / samedi</span>
+              </div>
+            </label>
           </div>
           <p className="mt-2 text-xs text-slate-400">
-            La modification ne touche que les futures saisies : les cotisations déjà
-            enregistrées conservent leur montant. Action tracée dans les logs.
+            Les nouveaux paiements utilisent le tarif correspondant à la fraternité actuelle. Lors d’une entrée ou sortie d’Animateur, tout l’historique payé du lecteur est recalculé.
           </p>
           <div className="mt-4">
             <BtnPrimary

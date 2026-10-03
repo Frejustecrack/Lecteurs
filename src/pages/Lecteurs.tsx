@@ -92,7 +92,7 @@ export default function Lecteurs() {
           .order('nom').order('prenom').order('matricule')
           .range(de, a)
       ),
-      supabase.from('fraternites').select('id, nom').order('nom'),
+      supabase.from('fraternites').select('id, nom, system_key').order('nom'),
       supabase.from('grades').select('id, nom').order('id'),
     ]);
     setLecteurs(trierLecteurs((rL.data ?? []) as Lecteur[]));
@@ -565,8 +565,12 @@ export default function Lecteurs() {
               >
                 <option value="">— aucune —</option>
                 {fraternites.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.nom}
+                  <option
+                    key={f.id}
+                    value={f.id}
+                    disabled={f.system_key === 'animateur' && profile?.role !== 'co_paroissial'}
+                  >
+                    {f.nom}{f.system_key === 'animateur' ? ' — tarif spécial' : ''}
                   </option>
                 ))}
               </select>

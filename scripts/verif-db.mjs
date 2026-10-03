@@ -207,7 +207,45 @@ const l2 = (await attendOk('caissier crée un second lecteur', 'caissier',
 if (l1.matricule === 'LEC100' && l2.matricule === 'LEC101') ok(`matricules séquentiels : ${l1.matricule}, ${l2.matricule}`);
 else ko('matricules séquentiels', `${l1.matricule}, ${l2.matricule}`);
 
-await attendRefus('responsable ne modifie pas le nom d\'un lecteur', 'responsable', `update public.lecteurs set nom = 'X' where id = $1 returning id`, [l1.id]);
+// Fraternité système Animateur : droits, tarif distinct et recalcul historique.
+const animateur = (await enAdminSql(`select id, nom from public.fraternites where system_key='animateur'`))[0];
+if (animateur?.nom === 'Animateur') ok('fraternité Animateur créée automatiquement par le système');
+else ko('fraternité Animateur créée automatiquement');
+await attendRefus('responsable ne crée pas directement un lecteur Animateur', 'responsable',
+  `insert into public.lecteurs (nom, prenom, matricule, fraternite_id) values ('TEST', 'Interdit', '', $1) returning id`, [animateur.id]);
+for (const role of ['admin', 'co', 'caissier', 'responsable']) {
+  await attendRefus(`${role} ne peut pas ajouter un membre à Animateur`, role,
+    `select public.changer_fraternite($1, $2)`, [l1.id, animateur.id]);
+}
+await attendOk('CO paroissial ajoute un membre à Animateur', 'co_paroissial',
+  `select public.changer_fraternite($1, $2)`, [l1.id, animateur.id]);
+await attendOk('Caissier enregistre le tarif Animateur de 100 F', 'caissier',
+  `insert into public.cotisations (lecteur_id, date_samedi, paye) values ($1, public.dernier_samedi(), true) returning id`, [l1.id]);
+let tarifAnimation = await enAdminSql(`select montant from public.cotisations where lecteur_id=$1 and date_samedi=public.dernier_samedi()`, [l1.id]);
+if (tarifAnimation[0]?.montant === 100) ok('tarif Animateur imposé par la base : 100 F');
+else ko('tarif Animateur imposé par la base', JSON.stringify(tarifAnimation[0]));
+await attendRefus('Admin ne peut pas retirer un membre d’Animateur', 'admin',
+  `select public.changer_fraternite($1, $2)`, [l1.id, frat2]);
+await attendRefus('Animateur avec membre ne peut pas être supprimée', 'admin',
+  `delete from public.fraternites where id=$1 returning id`, [animateur.id]);
+await attendOk('CO paroissial retire le membre d’Animateur', 'co_paroissial',
+  `select public.changer_fraternite($1, $2)`, [l1.id, frat2]);
+tarifAnimation = await enAdminSql(`select montant from public.cotisations where lecteur_id=$1 and date_samedi=public.dernier_samedi()`, [l1.id]);
+if (tarifAnimation[0]?.montant === 50) ok('sortie d’Animateur : historique intégral recalculé au tarif normal');
+else ko('sortie d’Animateur : historique recalculé', JSON.stringify(tarifAnimation[0]));
+await attendRefus('CO ne supprime pas Animateur même vide', 'co',
+  `delete from public.fraternites where id=$1 returning id`, [animateur.id]);
+await attendLignes('Admin peut supprimer Animateur lorsqu’elle est vide', 'admin',
+  `delete from public.fraternites where id=$1 returning id`, [animateur.id]);
+await enAdminSql(`insert into public.fraternites (nom, responsables, system_key) values ('Animateur', array[]::text[], 'animateur')`);
+await attendRefus('responsable ne modifie pas le tarif Animateur', 'responsable',
+  `update public.app_settings set value='200' where key='montant_cotisation_animateur' returning key`);
+await attendLignes('Admin modifie indépendamment le tarif Animateur', 'admin',
+  `update public.app_settings set value='125' where key='montant_cotisation_animateur' returning key`);
+await enAdminSql(`update public.app_settings set value='100' where key='montant_cotisation_animateur'`);
+await enAdminSql(`delete from public.cotisations where lecteur_id=$1 and date_samedi=public.dernier_samedi()`, [l1.id]);
+
+await attendRefus('responsable ne modifie pas le nom d\'un lecteur', 'responsable',  `update public.lecteurs set nom = 'X' where id = $1 returning id`, [l1.id]);
 await attendRefus('caissier ne modifie pas le grade directement', 'caissier', `update public.lecteurs set grade_id = 3 where id = $1 returning id`, [l1.id]);
 await attendRefus('responsable ne peut plus faire d\'UPDATE direct de fraternite_id (policy fermée)', 'responsable',
   `update public.lecteurs set fraternite_id = $2 where id = $1 returning id`, [l1.id, frat2]);
@@ -284,6 +322,15 @@ await attendRefus('compte sans rôle ne modifie pas non plus le samedi courant',
   `update public.presences set statut = 'absent' where lecteur_id=$1 and date_samedi=$2 returning id`, [l1.id, dernier]);
 await attendOk('Caissier peut toujours payer une cotisation future', 'caissier',
   `insert into public.cotisations (lecteur_id, date_samedi, paye) values ($1, $2, true) returning id`, [l1.id, futur]);
+const statsCotFuture = await en('caissier',
+  `select coalesce(sum(nb), 0)::int as nb
+     from public.v_cotisations_par_mois
+    where mois = to_char($1::date, 'YYYY-MM')`, [futur]);
+if (statsCotFuture.rows?.[0]?.nb === 0) ok("paiement anticipé exclu du taux jusqu'à l'arrivée du samedi");
+else ko("paiement anticipé exclu du taux", `nb statistique = ${statsCotFuture.rows?.[0]?.nb}`);
+const caisseCotFuture = await en('caissier', `select total_cotisations from public.v_caisse_totaux`);
+if (Number(caisseCotFuture.rows?.[0]?.total_cotisations) >= 50) ok('paiement anticipé inclus immédiatement dans la caisse');
+else ko('paiement anticipé inclus dans la caisse');
 await en('caissier', `delete from public.cotisations where lecteur_id=$1 and date_samedi=$2`, [l1.id, futur]);
 
 await attendRefus('responsable ne supprime pas une présence', 'responsable', `delete from public.presences where lecteur_id = $1 returning id`, [l1.id]);
@@ -666,7 +713,7 @@ section('9. Temps réel (publication supabase_realtime)');
 {
   const pub = await enAdminSql(`select tablename from pg_publication_tables where pubname = 'supabase_realtime' order by 1`);
   const tables = pub.map((r) => r.tablename);
-  for (const t of ['presences', 'cotisations', 'lecteurs', 'fraternites', 'caisse_operations', 'evenements', 'evenement_participants', 'evenement_paiements']) {
+  for (const t of ['presences', 'cotisations', 'lecteurs', 'fraternites', 'app_settings', 'caisse_operations', 'evenements', 'evenement_participants', 'evenement_paiements']) {
     if (tables.includes(t)) ok(`${t} publiée`);
     else ko(`${t} NON publiée`);
   }

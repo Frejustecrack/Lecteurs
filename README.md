@@ -186,12 +186,12 @@ Recommandé : **Authentication → Settings** → désactiver *Enable email sign
 | **Fraternités** | `/fraternites` | Nom + responsables (simples noms). Création par tous, renommage admin/co, **suppression par tout rôle si vide** (FK bloque si des lecteurs y sont encore). Temps réel. |
 | **Présences** | `/presences` | **Vue mensuelle** (3-5 samedis, `overflow-x`) ou **hebdomadaire** (1 samedi, **cartes sur mobile sans scroll**, tableau compact sur desktop). Légende en **chips** aux couleurs des cellules (vert / rouge / gris pointillé). Gel automatique des samedis passés (RLS `dernier_samedi()`), correction Admin tracée. |
 | **Suivis** | `/suivis` | Récap `present/absent/nonSaisi/taux` via `src/lib/recap.ts`. Filtres *absents / assidus / saisie incomplète*, filtre samedi précis, fraternité, recherche, tri colonnes. Cartes sur mobile, tableau sur desktop. **Export PDF du récapitulatif tel qu'affiché** (mêmes samedis comptés, mêmes filtres, même tri), tracé via `log_action('export.pdf')`. |
-| **Cotisations** | `/cotisations` | 50 F / samedi / lecteur (paramétrable dans `app_settings`). Vue mensuelle/hebdo (même UX que Présences). Saisie **Caissier uniquement**, pas de gel, mois passés modifiables. |
+| **Cotisations** | `/cotisations` | 50 F / samedi / lecteur (paramétrable dans `app_settings`). Vue mensuelle/hebdo (même UX que Présences). Saisie **Caissier uniquement**, paiements anticipés autorisés pour les samedis à venir, pas de gel, mois passés modifiables. |
 | **Événements** | `/evenements`, `/evenements/:id` | Création par CO, inscription avec recherche par nom/prénom/matricule, paiements en tranches (trigger `check_tranche` : total ≤ participation), **suppression par CO/Admin** (cascade participants/paiements/caisse + log `evenement.suppression`), **clôture CO** `en_cours→termine` (policy `evenements_update` WITH CHECK) + réouverture Admin. |
 | **Caisse** | `/caisse` | Caisse générale = cotisations payées + encaissements − décaissements (`event_id IS NULL`). Opérations CO uniquement. Export PDF. |
 | **Administration** | `/admin` | Logs (400 derniers), comptes & rôles, montant cotisation — **Admin uniquement** (RLS `is_admin()`). |
 
-**Règle “à preuve du contraire” :** un samedi **arrivé** non pointé = **rouge** = absence (ou cotisation due). Un samedi **à venir** = neutre = non comptabilisé. Les samedis à venir n'entrent dans aucun total (KPIs, graphiques, Suivis).
+**Règle “à preuve du contraire” :** un samedi **arrivé** non pointé = **rouge** = absence (ou cotisation due). Un samedi **à venir** = neutre : il ne crée encore ni absence ni dette. Une cotisation peut néanmoins être payée à l'avance ; elle entre immédiatement dans la caisse, mais dans le taux du mois seulement lorsque le samedi arrive. Les samedis futurs restent exclus des statistiques de présence et de dette.
 
 Sept exports PDF côté client (`src/pdf/export.ts` + `jspdf`/`jspdf-autotable`) : présences, cotisations, bilan événement, état de caisse, fiche lecteur, liste des lecteurs, récapitulatif d'assiduité (Suivis). Tous les documents partagent **l'en-tête officiel CDLJ** (reproduction conforme de `Document 1.pdf` avec logo CDLJ, image Sainte Famille, mention vicariale/archidiocèse, bandeau doré `#ffd966` et pied de page officiel). L'en-tête et les tableaux s'adaptent dynamiquement à l'orientation (portrait / paysage) et au terminal (téléphone mobile / tablette / ordinateur). Chaque export est tracé via `log_action('export.pdf')`.
 
@@ -200,9 +200,10 @@ Sept exports PDF côté client (`src/pdf/export.ts` + `jspdf`/`jspdf-autotable`)
 - **Matricule** `LEC100, LEC101…` via trigger `gen_matricule()` + `prochain_matricule()`. Jamais réattribué, même après archivage.
 - **Archivage** : `lecteurs.archived` + `archived_at`. Pas de `DELETE` physique. Restauration Admin.
 - **Gel** : `public.dernier_samedi()` (samedi courant ou précédent). RLS `presences_insert/update` refuse si `date_samedi < dernier_samedi()` sauf `is_admin()`.
-- **Samedis à venir** : `samediEstArrive()` / `samedisArrives()` — un samedi futur n'est pas une absence ni une cotisation due.
-- **Cotisations** : l'absence ne dispense pas. Le montant est dans `app_settings.montant_cotisation` (Admin).
-- **Fraternité :** tout rôle authentifié peut rattacher / détacher un lecteur via `changer_fraternite()` (journal `lecteur.fraternite`). Un UPDATE direct hors Admin/CO ne peut toucher qu'à `fraternite_id` (`check_lecteur_update`). Détachement `NULL` autorisé.
+- **Samedis à venir** : `samediEstArrive()` / `samedisArrives()` — un samedi futur n'est pas une absence ni une cotisation due, mais le Caissier peut enregistrer son paiement à l'avance.
+- **Cotisations** : l'absence ne dispense pas. Le tarif normal est dans `app_settings.montant_cotisation` et le tarif Animateur dans `montant_cotisation_animateur` ; seul l'Admin modifie ces deux paramètres indépendants.
+- **Fraternité Animateur :** créée automatiquement par migration avec un marqueur système immuable et un tarif initial de **100 F**. Seul le `co_paroissial` peut y ajouter ou en retirer un lecteur. Tout changement d'appartenance recalcule l'intégralité des cotisations payées de ce lecteur au tarif de sa nouvelle fraternité. Son nom et ses responsables restent modifiables par Admin/CO. Elle n'est supprimable, lorsqu'elle est vide, que par l'Admin ; toute fraternité comportant encore un membre reste protégée par la clé étrangère.
+- **Autres fraternités :** tout rôle authentifié peut rattacher / détacher un lecteur via `changer_fraternite()` (journal `lecteur.fraternite`). Un UPDATE direct est fermé ; l'appartenance passe par le RPC. Détachement `NULL` autorisé.
 - **Événements :** `en_cours ↔ termine` via RLS `statut`. Policy `evenements_update` : USING (ancienne ligne encore `en_cours`) + **WITH CHECK** (nouvelle ligne `en_cours` ou `termine`) — sans WITH CHECK, PostgreSQL réutilise USING sur la nouvelle ligne et le CO ne peut pas clôturer. Paiements en tranches bloqués si `sum(montant) + new.montant > montant_participation`.
 - **Caisses séparées** : générale (`event_id IS NULL`) vs une par événement.
 - **Conservation** : `lecteur_grades`, `appreciations` soft-delete, `logs` jamais purgés (sauf remise à zéro livraison).
@@ -411,7 +412,7 @@ Le rendu visuel des pages React (classes CSS, responsive) n'est pas testé autom
   applicatifs, **Admin compris** : création, modification, déplacement de date,
   upsert et suppression sont bloqués par RLS. La date de référence est celle du
   Bénin (`aujourdhui_benin()`). Le gel des anciens samedis reste inchangé.
-- Les **cotisations futures restent autorisées** selon leurs droits habituels.
+- Les **cotisations futures sont autorisées au Caissier uniquement** : le paiement entre immédiatement dans la caisse, sans créer de dette ni gonfler le taux de cotisation avant l'arrivée du samedi.
 
 ### Déploiement sans perte de données
 

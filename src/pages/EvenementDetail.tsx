@@ -89,7 +89,13 @@ export default function EvenementDetail() {
 
   const load = useCallback(async () => {
     if (!id) return;
+    setLoading(true);
     const rE = await supabase.from('evenements').select('*').eq('id', id).maybeSingle();
+    if (rE.error) {
+      toast(traduireErreur(rE.error, "charger l'événement"), 'err');
+      setLoading(false);
+      return;
+    }
     const ev = (rE.data as Evenement | null) ?? null;
     if (!ev) {
       navigate('/evenements');
@@ -118,16 +124,23 @@ export default function EvenementDetail() {
         .eq('archived', false)
         .order('nom').order('prenom').order('matricule').range(de, a)),
     ]);
+    const erreurChargement = rPartAvecLecteurs.error || rP.error || rO.error || rL.error;
     setErreurCandidats(Boolean(rL.error || rPartAvecLecteurs.error));
-    setCandidats(rL.error || rPartAvecLecteurs.error ? [] : rL.data);
+    if (erreurChargement) {
+      toast(traduireErreur(erreurChargement, "charger les détails de l'événement"), 'err');
+      setLoading(false);
+      return;
+    }
+    setCandidats(rL.data);
+    type ParticipantJoint = { lecteurs: Lecteur | null };
     const lecteursFromJoin = (rPartAvecLecteurs.data ?? [])
-      .map((r: any) => r.lecteurs)
-      .filter(Boolean) as Lecteur[];
+      .map((r) => (r as unknown as ParticipantJoint).lecteurs)
+      .filter((lecteur): lecteur is Lecteur => Boolean(lecteur));
     setLecteurs(trierLecteurs(lecteursFromJoin));
     setPaiements((rP.data ?? []) as EvenementPaiement[]);
     setOps((rO.data ?? []) as CaisseOperation[]);
     setLoading(false);
-  }, [id, navigate]);
+  }, [id, navigate, toast]);
 
   useEffect(() => {
     load();

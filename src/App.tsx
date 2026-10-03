@@ -25,7 +25,7 @@ const Anniversaires = lazy(() => import('./pages/Anniversaires'));
 const Admin = lazy(() => import('./pages/Admin'));
 
 function RequireAuth() {
-  const { user, profile, loading } = useAuth();
+  const { user, profile, loading, error, refreshProfile } = useAuth();
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center">
@@ -34,6 +34,24 @@ function RequireAuth() {
     );
   }
   if (!user) return <Navigate to="/login" replace />;
+  if (error) {
+    return (
+      <div className="flex h-screen items-center justify-center p-6">
+        <div className="max-w-md rounded-2xl border border-red-200 bg-red-50 p-6 text-center">
+          <div className="text-3xl">⚠️</div>
+          <h1 className="mt-2 text-lg font-bold text-slate-800">Profil indisponible</h1>
+          <p className="mt-2 text-sm text-slate-600">{error}</p>
+          <button
+            type="button"
+            onClick={() => void refreshProfile()}
+            className="mt-4 rounded-lg bg-cdlj px-4 py-2 text-sm font-semibold text-white"
+          >
+            Réessayer
+          </button>
+        </div>
+      </div>
+    );
+  }
   if (!profile || !profile.role) {
     return (
       <div className="flex h-screen items-center justify-center p-6">
