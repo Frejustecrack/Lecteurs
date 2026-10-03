@@ -36,6 +36,7 @@ import {
   appliquerFiltreRecap,
   calculerRecaps,
   filtrerRecaps,
+  indicateursRecap,
   trierRecaps,
 } from '../src/lib/recap.ts';
 import {
@@ -445,6 +446,37 @@ eq(
   filtrerRecaps(recaps, { recherche: 'Jean', animateurFraterniteId: 'fr2' }).length,
   0
 );
+
+// Indicateurs partagés par l'écran Suivis et le pied du bilan PDF : une seule
+// fonction, donc aucun écart possible entre les deux affichages.
+{
+  const ind = indicateursRecap(recaps, samedis.length);
+  eq('indicateurs — effectif', ind.effectif, 3);
+  eq('indicateurs — assidus (Marie seule)', ind.assidus, 1);
+  eq('indicateurs — ont été absents (Paul + Jean)', ind.absents, 2);
+  eq('indicateurs — taux moyen (100+75+25)/3', ind.tauxMoyen, 67);
+  eq('indicateurs — présents en moyenne (4+3+1)/4', ind.moyennePresents, 2);
+
+  const vide = indicateursRecap([], 4);
+  eq('indicateurs — effectif nul', vide.effectif, 0);
+  eq('indicateurs — aucun taux sans lecteur (pas de NaN)', vide.tauxMoyen, 0);
+  eq('indicateurs — aucune moyenne sans lecteur', vide.moyennePresents, 0);
+
+  const sansSeance = indicateursRecap(recaps, 0);
+  eq('indicateurs — aucune séance : moyenne nulle (pas de division par zéro)', sansSeance.moyennePresents, 0);
+  eq('indicateurs — aucune séance : le taux reste calculé', sansSeance.tauxMoyen, 67);
+
+  // Le périmètre comptable (animateurs inclus) ne donne PAS le même résultat
+  // que la liste affichée : c'est précisément pourquoi le PDF doit recevoir
+  // les deux jeux séparément.
+  const affiche = filtrerRecaps(recaps, { animateurFraterniteId: 'fr2' });
+  eq('indicateurs — la liste affichée exclut bien un animateur', affiche.length, 2);
+  eq(
+    'indicateurs — écran et PDF divergeraient sans jeu séparé',
+    indicateursRecap(affiche, samedis.length).tauxMoyen !== ind.tauxMoyen,
+    true
+  );
+}
 eq(
   'aucun lecteur sans absence effective n’apparaît dans « absents »',
   appliquerFiltreRecap(recaps, 'absents').some((r) => absencesEffectives(r) === 0),

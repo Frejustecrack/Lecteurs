@@ -22,7 +22,7 @@ import type {
   LecteurGrade,
   Presence,
 } from '../lib/types';
-import { absencesEffectives, type Recap } from '../lib/recap';
+import { absencesEffectives, indicateursRecap, type Recap } from '../lib/recap';
 import { LOGO_CDLJ_BASE64, SAINTE_FAMILLE_BASE64 } from './headerAssets';
 
 const BLEU_CDLJ: [number, number, number] = [26, 86, 219];
@@ -861,11 +861,23 @@ export function exportSuivis(args: {
   samedis: string[];
   recaps: Recap[];
   fraterniteNom: (id: string | null) => string | null;
+  /**
+   * Récapitulatifs servant aux INDICATEURS du pied de page.
+   *
+   * Le tableau liste ce qui est affiché à l'écran (animateurs retirés en vue
+   * globale) ; les indicateurs, eux, décrivent la communauté entière, comme
+   * les cartes de l'écran. Sans ce second jeu, le PDF et l'écran annonçaient
+   * deux taux moyens différents pour la même période.
+   *
+   * Par défaut : identique à `recaps`.
+   */
+  recapsTotaux?: Recap[];
   /** Filtres actifs, pour que le document dise ce qu'il contient. */
   contexte?: string;
   auteur: string;
 }) {
   const { periode, samedis, recaps, fraterniteNom, contexte, auteur } = args;
+  const totaux = args.recapsTotaux ?? recaps;
   const doc = nouveauDocument();
   const y = entete(doc, "Récapitulatif d'assiduité", periode, auteur);
 
@@ -903,18 +915,19 @@ export function exportSuivis(args: {
   table(doc, { startY: suite + 5, head, body });
   const finY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
 
-  const nbAssidus = recaps.filter((r) => r.total > 0 && r.present === r.total).length;
-  const nbAbsents = recaps.filter((r) => absencesEffectives(r) > 0).length;
-  const tauxMoyen =
-    recaps.length > 0
-      ? Math.round(recaps.reduce((s, r) => s + r.taux, 0) / recaps.length)
-      : 0;
+  // Même fonction que les cartes de l'écran Suivis : impossible de diverger.
+  const { assidus: nbAssidus, absents: nbAbsents, tauxMoyen } = indicateursRecap(
+    totaux,
+    samedis.length
+  );
+  // Le tableau peut lister moins de monde que les indicateurs n'en comptent.
+  const ecart = totaux.length - recaps.length;
 
   doc.setFontSize(9.5);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(15, 23, 42);
   doc.text(
-    `Lecteurs : ${recaps.length}   •   Assidus : ${nbAssidus}   •   Ayant été absents : ${nbAbsents}   •   Taux moyen : ${tauxMoyen} %`,
+    `Lecteurs : ${totaux.length}${ecart > 0 ? ` (dont ${ecart} animateur(s) non listés)` : ''}   •   Assidus : ${nbAssidus}   •   Ayant été absents : ${nbAbsents}   •   Taux moyen : ${tauxMoyen} %`,
     14,
     finY
   );

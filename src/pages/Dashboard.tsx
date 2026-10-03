@@ -59,7 +59,23 @@ export default function Dashboard() {
   }, []);
 
   // Synchronisation temps réel : toute modif de présence/cotisation/lecteur recharge le tableau de bord
-  useRealtime('realtime-dashboard', ['presences', 'cotisations', 'lecteurs', 'caisse_operations', 'evenements', 'evenement_paiements'], load);
+  // `fraternites` est indispensable : désigner la fraternité au tarif Animateur
+// ne touche aucune autre table, mais change l'effectif annoncé (`animateurs`
+// dans v_lecteurs_compteurs). Sans cet abonnement, la mention restait figée
+// jusqu'au prochain rechargement manuel.
+  useRealtime(
+    'realtime-dashboard',
+    [
+      'presences',
+      'cotisations',
+      'lecteurs',
+      'fraternites',
+      'caisse_operations',
+      'evenements',
+      'evenement_paiements',
+    ],
+    load
+  );
 
   async function load() {
     const now = new Date();

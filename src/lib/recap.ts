@@ -164,3 +164,45 @@ export function trierRecaps(recaps: Recap[], tri: TriRecap, asc: boolean): Recap
     }
   });
 }
+
+/** Indicateurs d'assiduité d'un ensemble de récapitulatifs. */
+export interface IndicateursRecap {
+  effectif: number;
+  assidus: number;
+  absents: number;
+  /** Moyenne de présents par séance, arrondie au dixième. */
+  moyennePresents: number;
+  /** Taux moyen de présence, en pourcentage entier. */
+  tauxMoyen: number;
+}
+
+/**
+ * Calcul UNIQUE des indicateurs affichés en bas de l'écran Suivis et en pied
+ * du bilan PDF.
+ *
+ * Les deux les calculaient chacun de leur côté, à partir de deux ensembles
+ * différents : l'écran comptait toute la communauté, le PDF seulement les
+ * lignes listées. Résultat, un taux moyen différent sur le même bilan et la
+ * même période. Une seule fonction supprime la possibilité même de l'écart.
+ *
+ * @param nbSeances nombre de samedis comptés ; 0 ⇒ moyenne nulle.
+ */
+export function indicateursRecap(
+  recaps: readonly Recap[],
+  nbSeances: number
+): IndicateursRecap {
+  const effectif = recaps.length;
+  return {
+    effectif,
+    assidus: recaps.filter((r) => r.total > 0 && r.present === r.total).length,
+    absents: recaps.filter((r) => absencesEffectives(r) > 0).length,
+    moyennePresents:
+      nbSeances > 0
+        ? Math.round((recaps.reduce((s, r) => s + r.present, 0) / nbSeances) * 10) / 10
+        : 0,
+    tauxMoyen:
+      effectif > 0
+        ? Math.round(recaps.reduce((s, r) => s + r.taux, 0) / effectif)
+        : 0,
+  };
+}

@@ -34,6 +34,7 @@ import {
   absencesEffectives,
   appliquerFiltreRecap,
   calculerRecaps,
+  indicateursRecap,
   filtrerRecaps,
   type FiltreRecap,
 } from '../lib/recap';
@@ -245,20 +246,12 @@ export default function Suivis() {
 
   // ---------------------------------------------------------------- indicateurs
   const nbSeances = samedisComptes.length;
-  const nbAssidus = comptabilises.filter((r) => r.total > 0 && r.present === r.total).length;
-  const nbAbsents = comptabilises.filter((r) => absencesEffectives(r) > 0).length;
-  const moyennePresents =
-    nbSeances > 0
-      ? Math.round(
-          (comptabilises.reduce((s, r) => s + r.present, 0) / nbSeances) * 10
-        ) / 10
-      : 0;
-  const tauxGlobal =
-    comptabilises.length > 0
-      ? Math.round(
-          comptabilises.reduce((s, r) => s + r.taux, 0) / comptabilises.length
-        )
-      : 0;
+  // Même fonction que le pied du bilan PDF : impossible de diverger.
+  const indicateurs = indicateursRecap(comptabilises, nbSeances);
+  const nbAssidus = indicateurs.assidus;
+  const nbAbsents = indicateurs.absents;
+  const moyennePresents = indicateurs.moyennePresents;
+  const tauxGlobal = indicateurs.tauxMoyen;
 
   // ---------------------------------------------------------------- navigation
   function allerPrecedent() {
@@ -329,6 +322,9 @@ export default function Suivis() {
         periode: periodeLabel,
         samedis: samedisComptes,
         recaps: tries,
+        // Indicateurs du pied de page : même périmètre que les cartes de
+        // l'écran (animateurs compris), sinon le PDF contredirait l'écran.
+        recapsTotaux: comptabilises,
         fraterniteNom,
         contexte: morceaux.length > 0 ? morceaux.join('   •   ') : undefined,
         auteur: profile?.full_name ?? '—',
