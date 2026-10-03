@@ -111,7 +111,7 @@ export default function Permissions() {
     load();
   }, [load]);
 
-  useRealtime('realtime-permissions', ['permissions'], load);
+  useRealtime('realtime-permissions', ['permissions', 'lecteurs', 'fraternites'], load);
 
   // ----------------------------------------------------------- maps (perf)
   const lecteurMap = useMemo(

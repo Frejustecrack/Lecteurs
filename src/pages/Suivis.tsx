@@ -167,7 +167,7 @@ export default function Suivis() {
   }, [load]);
 
   // Synchronisation temps réel : toute modification de présence est reflétée dans le récap
-  useRealtime('realtime-suivis', ['presences', 'lecteurs'], load);
+  useRealtime('realtime-suivis', ['presences', 'lecteurs', 'fraternites'], load);
 
   // Le samedi sélectionné doit rester dans la période courante.
   useEffect(() => {
