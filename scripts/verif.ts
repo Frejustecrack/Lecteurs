@@ -25,6 +25,7 @@ import {
 } from '../src/lib/dates.ts';
 import {
   anneeCourante,
+  montantParametre,
   bornesAnneeAdhesion,
   bornesAnneeNaissance,
   validerAnneesLecteur,
@@ -690,6 +691,24 @@ console.log('\n── Temps réel : regroupement et non-superposition des rechar
   verif(
     'le CO déplace librement entre deux fraternités ordinaires',
     peutDeplacerEntreFraternites('co', null, null)
+  );
+}
+
+// ============================================================================
+// Tarifs : `Number(v) || defaut` était faux sur 0 et sur NaN.
+// ============================================================================
+{
+  console.log('\n▶ Lecture des tarifs (app_settings)');
+  verif('un tarif normal est conservé', montantParametre(50, 50) === 50);
+  verif('un tarif modifié est conservé', montantParametre(75, 50) === 75);
+  verif('un tarif à 0 est conservé (samedi offert)', montantParametre(0, 50) === 0);
+  verif('un paramètre absent retombe sur le défaut', montantParametre(undefined, 50) === 50);
+  verif('un paramètre null retombe sur le défaut', montantParametre(null, 100) === 100);
+  verif('une valeur non numérique retombe sur le défaut', montantParametre(Number('abc'), 100) === 100);
+  verif('Infinity retombe sur le défaut', montantParametre(Infinity, 50) === 50);
+  verif(
+    'le tarif Animateur par défaut est bien 100 F par samedi',
+    montantParametre(undefined, 100) === 100
   );
 }
 

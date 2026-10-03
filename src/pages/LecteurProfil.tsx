@@ -48,6 +48,7 @@ import {
   useToast,
 } from '../components/ui';
 import { traduireErreur } from '../lib/errors';
+import { montantParametre } from '../lib/validation';
 import { journaliserExport } from '../lib/journal';
 import {
   anneeCourante,
@@ -226,8 +227,8 @@ export default function LecteurProfil() {
       (f) => f.id === lecteur.fraternite_id && f.system_key === 'animateur'
     );
     setMontantCot(estAnimateur
-      ? (settings.get('montant_cotisation_animateur') || 100)
-      : (settings.get('montant_cotisation') || 50));
+      ? montantParametre(settings.get('montant_cotisation_animateur'), 100)
+      : montantParametre(settings.get('montant_cotisation'), 50));
     setLoading(false);
   }, [id, navigate, toast]);
 

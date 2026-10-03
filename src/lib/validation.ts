@@ -99,3 +99,20 @@ export function bornesAnneeNaissance() {
 export function bornesAnneeAdhesion() {
   return { min: ANNEE_MIN, max: anneeCourante() };
 }
+
+/**
+ * Lecture d'un paramètre numérique d'`app_settings`.
+ *
+ * `Number(value) || defaut` était faux sur DEUX cas réels :
+ *  - un tarif volontairement fixé à **0** (samedi offert) retombait sur le
+ *    tarif par défaut à l'écran alors que la base enregistrait bien 0 ;
+ *  - une valeur non numérique donnait `NaN`, affiché tel quel.
+ *
+ * Le repli ne doit s'appliquer qu'à une valeur absente ou non numérique.
+ */
+export function montantParametre(
+  valeur: number | undefined | null,
+  defaut: number
+): number {
+  return typeof valeur === 'number' && Number.isFinite(valeur) ? valeur : defaut;
+}

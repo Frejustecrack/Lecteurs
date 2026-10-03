@@ -39,6 +39,7 @@ export default function Fraternites() {
   const [fraternites, setFraternites] = useState<Fraternite[]>([]);
   const [lecteurs, setLecteurs] = useState<Lecteur[]>([]);
   const [loading, setLoading] = useState(true);
+  const [erreurChargement, setErreurChargement] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState({ nom: '', responsables: '' });
@@ -65,10 +66,20 @@ export default function Fraternites() {
           .range(de, a)
       ),
     ]);
+    // Sans ce contrôle, un refus RLS ou une coupure réseau affichait
+    // « Aucune fraternité. Créez la première ! » — un message FAUX qui pousse
+    // à recréer des fraternités existantes (et à buter sur l'unicité du nom).
+    if (rF.error || rL.error) {
+      toast(traduireErreur(rF.error ?? rL.error, 'charger les fraternités'), 'err');
+      setErreurChargement(true);
+      setLoading(false);
+      return;
+    }
+    setErreurChargement(false);
     setFraternites((rF.data ?? []) as Fraternite[]);
     setLecteurs(trierLecteurs((rL.data ?? []) as Lecteur[]));
     setLoading(false);
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     load();
@@ -272,7 +283,9 @@ export default function Fraternites() {
         actions={<BtnPrimary onClick={openCreate}>+ Nouvelle fraternité</BtnPrimary>}
       />
 
-      {fraternites.length === 0 ? (
+      {erreurChargement ? (
+        <EmptyState msg="Les fraternités n'ont pas pu être chargées. Vérifiez votre connexion puis rechargez la page." />
+      ) : fraternites.length === 0 ? (
         <EmptyState msg="Aucune fraternité. Créez la première !" />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

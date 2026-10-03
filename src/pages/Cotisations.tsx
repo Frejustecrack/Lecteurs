@@ -22,6 +22,7 @@ import {
   semaineLabel,
 } from '../lib/dates';
 import { useDebounce } from '../lib/useDebounce';
+import { montantParametre } from '../lib/validation';
 import { traduireErreur } from '../lib/errors';
 import { journaliserExport } from '../lib/journal';
 import {
@@ -119,8 +120,8 @@ export default function Cotisations() {
     setLecteurs(trierLecteurs((rL.data ?? []) as Lecteur[]));
     setFraternites((rF.data ?? []) as Fraternite[]);
     const settings = new Map((rSet.data ?? []).map((s) => [s.key, Number(s.value)]));
-    setMontantCot(settings.get('montant_cotisation') || 50);
-    setMontantAnimateur(settings.get('montant_cotisation_animateur') || 100);
+    setMontantCot(montantParametre(settings.get('montant_cotisation'), 50));
+    setMontantAnimateur(montantParametre(settings.get('montant_cotisation_animateur'), 100));
 
     if (samedis.length > 0) {
       // 200 lecteurs × 5 samedis = 1 000 lignes : la limite PostgREST. Paginé.
