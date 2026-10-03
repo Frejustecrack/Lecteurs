@@ -5,7 +5,7 @@ import { useDebounce } from '../lib/useDebounce';
 import { fmtDateHeure } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
 import type { Fraternite, LogEntry, Profile, Role } from '../lib/types';
-import { ROLE_LABELS } from '../lib/types';
+import { ROLE_LABELS_ADMIN } from '../lib/types';
 import {
   Badge,
   BtnPrimary,
@@ -67,7 +67,7 @@ export default function Admin() {
       toast("Vous ne pouvez pas modifier votre propre rôle ici.", 'err');
       return;
     }
-    if (!confirm(`Changer le rôle de ${c.full_name ?? c.id} en ${ROLE_LABELS[role]} ?`))
+    if (!confirm(`Changer le rôle de ${c.full_name ?? c.id} en ${ROLE_LABELS_ADMIN[role]} ?`))
       return;
     setBusyRole(c.id);
     const { error } = await supabase
@@ -317,7 +317,7 @@ export default function Admin() {
                     </td>
                     <td className="px-4 py-2">
                       {c.role ? (
-                        <Badge tone="blue">{ROLE_LABELS[c.role]}</Badge>
+                        <Badge tone="blue">{ROLE_LABELS_ADMIN[c.role]}</Badge>
                       ) : (
                         <Badge tone="gray">En attente</Badge>
                       )}
@@ -336,9 +336,9 @@ export default function Admin() {
                             }
                           >
                             <option value="">— sans rôle —</option>
-                            {(Object.keys(ROLE_LABELS) as Role[]).map((r) => (
+                            {(Object.keys(ROLE_LABELS_ADMIN) as Role[]).map((r) => (
                               <option key={r} value={r}>
-                                {ROLE_LABELS[r]}
+                                {ROLE_LABELS_ADMIN[r]}
                               </option>
                             ))}
                           </select>

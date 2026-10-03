@@ -39,6 +39,8 @@ import {
   trierRecaps,
 } from '../src/lib/recap.ts';
 import {
+  ROLE_LABELS,
+  ROLE_LABELS_ADMIN,
   estCO,
   estCOParoissial,
   peutDeplacerEntreFraternites,
@@ -691,6 +693,37 @@ console.log('\n── Temps réel : regroupement et non-superposition des rechar
   verif(
     'le CO déplace librement entre deux fraternités ordinaires',
     peutDeplacerEntreFraternites('co', null, null)
+  );
+}
+
+// ============================================================================
+// Libellés de rôle : l'écran d'attribution doit distinguer co de co_paroissial,
+// sinon l'Admin voit deux entrées identiques et ne peut pas choisir.
+// ============================================================================
+{
+  console.log('\n▶ Libellés des rôles');
+  const libellesAdmin = Object.values(ROLE_LABELS_ADMIN);
+  verif(
+    'aucun libellé en double dans l’écran d’administration',
+    new Set(libellesAdmin).size === libellesAdmin.length,
+    libellesAdmin.join(' | ')
+  );
+  verif(
+    'co et co_paroissial y sont distinguables',
+    ROLE_LABELS_ADMIN.co !== ROLE_LABELS_ADMIN.co_paroissial
+  );
+  verif(
+    'les 5 rôles sont proposés à l’attribution',
+    Object.keys(ROLE_LABELS_ADMIN).length === 5
+  );
+  verif(
+    'l’affichage courant garde le libellé commun (même fonction vue de la communauté)',
+    ROLE_LABELS.co === ROLE_LABELS.co_paroissial
+  );
+  verif(
+    'les deux tables couvrent exactement les mêmes rôles',
+    Object.keys(ROLE_LABELS).sort().join(',') ===
+      Object.keys(ROLE_LABELS_ADMIN).sort().join(',')
   );
 }
 

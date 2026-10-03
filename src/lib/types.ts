@@ -154,6 +154,27 @@ export const ROLE_LABELS: Record<Role, string> = {
   responsable: 'Responsable',
 };
 
+/**
+ * Libellés DÉSAMBIGUÏSÉS, réservés à l'écran d'administration des comptes.
+ *
+ * `ROLE_LABELS` affiche volontairement le même intitulé pour `co` et
+ * `co_paroissial` : vis-à-vis de la communauté, c'est la même fonction.
+ *
+ * Mais au moment d'ATTRIBUER un rôle, cette égalité devient un piège : la
+ * liste déroulante proposait deux entrées « Chargé des Opérations » rigoureusement
+ * identiques, et la colonne « Rôle » affichait la même chose pour les deux.
+ * L'Administrateur ne pouvait donc ni choisir en connaissance de cause, ni
+ * vérifier ce qu'il avait choisi — alors que la différence est réelle : seul
+ * `co_paroissial` gère les membres de la fraternité au tarif Animateur.
+ */
+export const ROLE_LABELS_ADMIN: Record<Role, string> = {
+  admin: 'Administrateur',
+  co: 'Chargé des Opérations (diocésain)',
+  co_paroissial: 'Chargé des Opérations (paroissial) — gère la fraternité Animateur',
+  caissier: 'Caissier',
+  responsable: 'Responsable',
+};
+
 // ---------------------------------------------------------------------------
 // Helpers de rôle — à utiliser PARTOUT à la place des comparaisons littérales.
 //
