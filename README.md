@@ -480,3 +480,117 @@ un faux état « aucun anniversaire ».
   dates invalides et 29 février. Environnement PostgreSQL local PGlite uniquement.
 - `npm run verif:all` et la CI incluent ces vérifications. `npm run build` effectue
   aussi le typage TypeScript ; le dépôt n'a pas de script lint distinct.
+
+## Correction — désignation de la fraternité Animateur (04/10/2026)
+
+### Problème corrigé
+
+Le tarif Animateur (100 F / samedi) ne suit jamais le **nom** d'une fraternité,
+seulement un marqueur technique (`fraternites.system_key = 'animateur'`), posé
+sur une seule fraternité à la fois. Ce marqueur ne pouvait être déplacé que
+depuis un écran **Administration → Paramètres**, séparé de l'écran
+**Fraternités** où les fraternités et leurs membres sont réellement gérés.
+
+Cas réel observé : une communauté a créé à la main sa propre
+« Fraternité animateur » (11 membres, cotisations déjà encaissées) sans jamais
+ouvrir cet écran de désignation — personne ne savait qu'il existait. Ses
+membres ont donc été facturés 50 F au lieu de 100 F, sans que rien dans
+l'application ne le signale.
+
+### Ce qui change
+
+- **Base** — `supabase/migrations/20261004120000_corriger_designation_fraternite_animateur.sql`
+  ajoute `public.reparer_designation_fraternite_animateur()` : si aucune
+  fraternité marquée n'a de membres et qu'**une seule** fraternité ressemble à
+  « …animateur… » et en a, elle est désignée automatiquement (recalcul de
+  l'historique payé des deux côtés, nettoyage de la fraternité « Animateur »
+  vide créée par la toute première migration). En cas d'ambiguïté (plusieurs
+  candidats), elle **n'agit jamais** — elle n'arbitre pas à la place d'un
+  Admin. La fonction est appelée une fois immédiatement par la migration pour
+  corriger l'état actuel de la base, et reste appelable (Admin uniquement)
+  pour une réparation future.
+- **Interface** — le réglage « Fraternité au tarif Animateur » est retiré
+  d'Administration → Paramètres (personne ne l'y trouvait) et déplacé sur
+  l'écran **Fraternités**, avec une alerte automatique quand une fraternité
+  évocatrice existe sans être désignée. Un rappel plus discret apparaît aussi
+  sur l'écran Cotisations, là où l'argent est encaissé.
+
+### Déploiement
+
+Appliquer `supabase/migrations/20261004120000_corriger_designation_fraternite_animateur.sql`
+par le circuit habituel Supabase, puis déployer le frontend. Elle corrige les
+données existantes dès son application — aucune action manuelle supplémentaire
+n'est nécessaire si un seul groupe candidat existe. En cas d'ambiguïté,
+l'écran Fraternités l'indiquera sans deviner à la place de l'Admin.
+
+Vérifications : `npm run verif` (détection du candidat, cas ambigu) et
+`npm run verif:db` (réparation automatique rejouée dans un vrai PostgreSQL,
+historique recalculé, nettoyage du doublon, droits par rôle).
+
+## Correction — annulation d'une désignation automatique non revue (04/10/2026)
+
+### Problème corrigé
+
+La correction ci-dessus avait un défaut grave : `reparer_designation_fraternite_animateur()`
+était invoquée **automatiquement par la migration elle-même**, sans qu'aucun
+Admin ne confirme quoi que ce soit. Elle désignait une fraternité entière dès
+qu'elle trouvait un nom évocateur (« …animateur… ») et des membres — sans
+jamais vérifier que **chacun** de ces membres est réellement un animateur.
+
+Signalé en production : des lecteurs qui ne sont **pas** des animateurs se
+sont retrouvés facturés 100 F au lieu du tarif normal, du jour au lendemain,
+sans qu'aucune personne n'ait validé ce changement. Une décision qui touche à
+l'argent des familles ne doit **jamais** s'appliquer automatiquement.
+
+### Ce qui change
+
+- **Base** — `supabase/migrations/20261004130000_annuler_designation_automatique_non_revue.sql`
+  annule précisément l'application automatique de la migration précédente :
+  si le dernier journal `fraternite.tarif_animateur` porte encore
+  `origine = 'reparation_automatique'` (= personne n'a rien revu ni confirmé
+  depuis), le marqueur est retiré et l'historique payé de cette fraternité est
+  recalculé au tarif normal. **Si un Admin a confirmé ou changé la
+  désignation depuis** (un journal plus récent existe, sans cette origine),
+  la migration ne touche strictement **rien** : sa décision, prise en
+  connaissance de cause depuis l'écran Fraternités, prévaut. Sur une
+  installation neuve, ce script est un no-op garanti (aucun journal
+  préexistant).
+- **Politique, à partir de maintenant** — plus aucune désignation de fraternité
+  Animateur ne s'applique automatiquement. `reparer_designation_fraternite_animateur()`
+  reste disponible (Admin uniquement) pour **détecter et suggérer** un
+  candidat — jamais pour l'appliquer tout seul. L'application du tarif reste
+  un acte conscient : écran Fraternités, avec confirmation explicite de
+  l'Admin avant tout recalcul de cotisations.
+- **Documentation** — le commentaire d'en-tête de `src/lib/fraternites.ts`
+  contredisait le comportement réel de `filtrerPourTotaux` ; corrigé pour
+  énoncer clairement la règle unique du produit : ce qui est **affiché** se
+  filtre (les animateurs disparaissent des listes en vue globale), ce qui est
+  **compté** (cotisations, caisse) ne se filtre **jamais**.
+
+### Vérifié, sans régression
+
+Audit complet des écrans concernés par la règle « masquage visuel, jamais
+comptable » :
+
+- **Présences / Cotisations** (`filtrerParFraternite` + `filtrerPourTotaux`) :
+  déjà conformes avant ce correctif — les animateurs disparaissent des listes
+  en vue globale et réapparaissent dès que leur fraternité est sélectionnée ;
+  les totaux affichés restent toujours animateur-inclusifs.
+- **Caisse** (`src/pages/Caisse.tsx`) et **Tableau de bord**
+  (`src/pages/Dashboard.tsx`) : déjà conformes — aucune requête n'y est
+  filtrée par fraternité ; les cartes de solde/récolte/cumul/décaissements
+  lisent les vues SQL globales (`v_caisse_totaux`, `v_cotisations_par_annee`)
+  et sont bien rendues à l'écran.
+
+### Déploiement
+
+Appliquer `supabase/migrations/20261004130000_annuler_designation_automatique_non_revue.sql`
+par le circuit habituel Supabase, puis déployer le frontend. Si une
+désignation automatique non revue existait encore, elle est retirée et les
+cotisations concernées reviennent au tarif normal dès l'application de cette
+migration ; sinon, aucun effet.
+
+Vérifications : `npm run verif:db` (annulation d'une désignation non revue,
+idempotence, non-régression si un Admin a confirmé/changé la désignation
+depuis) et l'ensemble `npm run verif:all` (223 + 284 + 19 + 35 + 23 + 37
+vérifications, toutes au vert).

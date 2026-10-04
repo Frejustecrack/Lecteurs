@@ -23,6 +23,7 @@ import {
 } from '../lib/dates';
 import { useDebounce } from '../lib/useDebounce';
 import {
+  candidatFraterniteAnimateur,
   compterAnimateurs,
   filtrerParFraternite,
   filtrerPourTotaux,
@@ -35,6 +36,7 @@ import { montantParametre } from '../lib/validation';
 import { traduireErreur } from '../lib/errors';
 import { journaliserExport } from '../lib/journal';
 import {
+  estAdmin,
   estCaissier,
   peutExporter as rolePeutExporter,
   type Cotisation,
@@ -169,6 +171,10 @@ export default function Cotisations() {
 
   const animateurId = idFraterniteAnimateur(fraternites);
   const estVueAnimateurs = vueAnimateurs(fId, animateurId);
+  // Détecte une fraternité « …animateur… » qui a des membres mais n'a jamais
+  // été désignée (voir Fraternités) : sans cette alerte, ses membres restent
+  // facturés 50 F sans que rien ne l'explique sur CET écran, celui de l'argent.
+  const candidatAnimateur = candidatFraterniteAnimateur(fraternites, lecteurs);
   const tarifLecteur = useCallback(
     (lecteur: Lecteur) => lecteur.fraternite_id === animateurId ? montantAnimateur : montantCot,
     [animateurId, montantAnimateur, montantCot]
@@ -449,6 +455,25 @@ export default function Cotisations() {
           }
         />
       </div>
+
+      {candidatAnimateur && (
+        <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          ⚠️ « {candidatAnimateur.nom} » ressemble à la fraternité des animateurs mais
+          n'a pas le tarif Animateur (100 F) : ses membres sont facturés au tarif
+          normal ci-dessous.{' '}
+          {estAdmin(profile?.role) ? (
+            <>
+              Désignez-la depuis{' '}
+              <Link to="/fraternites" className="font-semibold underline">
+                Fraternités
+              </Link>
+              .
+            </>
+          ) : (
+            "Signalez-le à l'Administrateur."
+          )}
+        </div>
+      )}
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <select

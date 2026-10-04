@@ -50,6 +50,7 @@ import {
   type Role,
 } from '../src/lib/types.ts';
 import {
+  candidatFraterniteAnimateur,
   compterAnimateurs,
   filtrerParFraternite,
   filtrerPourTotaux,
@@ -880,6 +881,68 @@ console.log('\n── Temps réel : regroupement et non-superposition des rechar
   verif('la mention explicite le périmètre du total', mentionAnimateurs(2) === 'animateurs inclus (2)');
   verif('aucune mention quand il n’y a pas d’animateur', mentionAnimateurs(0) === undefined);
   verif('aucune mention sur un compte négatif', mentionAnimateurs(-1) === undefined);
+}
+
+// ============================================================================
+// candidatFraterniteAnimateur : détection d'une fraternité « …animateur… »
+// créée à la main et jamais désignée — le bug reproduit en production avec
+// la « Fraternité animateur » (11 membres facturés au tarif normal).
+// ============================================================================
+{
+  console.log('\n▶ Détection de la fraternité Animateur non désignée');
+
+  const lecteursDe = (id: string, n: number) =>
+    Array.from({ length: n }, (_, i) => ({ fraternite_id: id, nom: `L${i}` }));
+
+  // Cas réel : aucune fraternité marquée, une seule ressemble à « animateur »
+  // et a des membres.
+  const frats1 = [
+    { id: 'f-system', nom: 'Animateur', system_key: 'animateur' as const },
+    { id: 'f-maison', nom: 'Fraternité animateur', system_key: null },
+    { id: 'f-jean', nom: 'Saint Jean', system_key: null },
+  ];
+  const lecteurs1 = lecteursDe('f-maison', 11).concat(lecteursDe('f-jean', 3));
+  const candidat1 = candidatFraterniteAnimateur(frats1, lecteurs1);
+  verif(
+    'fraternité « maison » avec membres détectée alors que la fraternité système est vide',
+    candidat1?.id === 'f-maison'
+  );
+
+  // La fraternité marquée a déjà des membres : configuration saine, rien à suggérer.
+  const frats2 = [{ id: 'f-maison', nom: 'Fraternité animateur', system_key: 'animateur' as const }];
+  verif(
+    'aucune suggestion quand la fraternité marquée a déjà des membres',
+    candidatFraterniteAnimateur(frats2, lecteursDe('f-maison', 11)) === null
+  );
+
+  // Aucun nom ne ressemble à « animateur » : rien à suggérer.
+  verif(
+    'aucune suggestion sans nom évocateur',
+    candidatFraterniteAnimateur(
+      [{ id: 'f-jean', nom: 'Saint Jean', system_key: null }],
+      lecteursDe('f-jean', 5)
+    ) === null
+  );
+
+  // Un nom évocateur mais sans membre ne doit jamais être suggéré.
+  verif(
+    'aucune suggestion sur une fraternité vide',
+    candidatFraterniteAnimateur(
+      [{ id: 'f-vide', nom: 'Animateurs', system_key: null }],
+      []
+    ) === null
+  );
+
+  // Deux candidats plausibles : on ne choisit jamais au hasard.
+  const frats3 = [
+    { id: 'f-a', nom: 'Fraternité animateur', system_key: null },
+    { id: 'f-b', nom: 'Animateurs du secteur', system_key: null },
+  ];
+  const lecteurs3 = lecteursDe('f-a', 4).concat(lecteursDe('f-b', 2));
+  verif(
+    'ambiguïté entre deux candidats : aucune suggestion',
+    candidatFraterniteAnimateur(frats3, lecteurs3) === null
+  );
 }
 
 // ============================================================================
