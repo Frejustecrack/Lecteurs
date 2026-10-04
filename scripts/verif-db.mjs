@@ -219,6 +219,8 @@ for (const role of ['admin', 'co', 'caissier', 'responsable']) {
 }
 await attendOk('CO paroissial ajoute un membre à Animateur', 'co_paroissial',
   `select public.changer_fraternite($1, $2)`, [l1.id, animateur.id]);
+await attendOk('CO paroissial change le grade d’un membre d’Animateur', 'co_paroissial',
+  `select public.changer_grade($1, 2)`, [l1.id]);
 await attendOk('Caissier enregistre le tarif Animateur de 100 F', 'caissier',
   `insert into public.cotisations (lecteur_id, date_samedi, paye) values ($1, public.dernier_samedi(), true) returning id`, [l1.id]);
 let tarifAnimation = await enAdminSql(`select montant from public.cotisations where lecteur_id=$1 and date_samedi=public.dernier_samedi()`, [l1.id]);
@@ -314,6 +316,79 @@ await enAdminSql(`delete from public.cotisations where lecteur_id=$1 and date_sa
 }
 
 // ---------------------------------------------------------------------------
+// Réparation automatique de la désignation (migration 20261004120000).
+//
+// Reproduit fidèlement le cas réel rencontré en production : une communauté
+// crée sa propre « Fraternité animateur », lui affecte des membres par la
+// voie ordinaire (jamais via definir_fraternite_animateur), encaisse déjà des
+// cotisations — au tarif normal, sans le savoir, sans que personne n'ait
+// jamais ouvert l'écran de désignation. La réparation doit détecter et
+// corriger ce cas TOUTE SEULE, sans intervention humaine.
+// ---------------------------------------------------------------------------
+{
+  const fratAnim = (await attendOk('responsable crée "Fraternité animateur" (fraternité ordinaire, sans marqueur)', 'responsable',
+    `insert into public.fraternites (nom) values ('Fraternité animateur') returning id`)).rows[0].id;
+  const lecAnim = (await attendOk('responsable y inscrit un lecteur', 'responsable',
+    `insert into public.lecteurs (nom, prenom, matricule, fraternite_id, created_at) values ('AFANOU', 'Précieuse', '', $1, '2020-01-01') returning id`, [fratAnim])).rows[0].id;
+  await attendOk('caissier encaisse une cotisation avant toute réparation', 'caissier',
+    `insert into public.cotisations (lecteur_id, date_samedi, paye) values ($1, public.dernier_samedi(), true) returning id`, [lecAnim]);
+
+  let m = await enAdminSql(`select montant from public.cotisations where lecteur_id=$1 and date_samedi=public.dernier_samedi()`, [lecAnim]);
+  if (m[0]?.montant === 50) ok('avant réparation : facturée 50 F malgré son nom (bug reproduit)');
+  else ko('avant réparation : tarif 50 F', JSON.stringify(m[0]));
+
+  const marqueAvant = (await enAdminSql(`select id, nom from public.fraternites where system_key='animateur'`))[0];
+
+  const rapport = (await enAdminSql(`select public.reparer_designation_fraternite_animateur() as r`))[0].r;
+  if (rapport?.action === 'corrigee' && rapport.fraternite_designee === 'Fraternité animateur')
+    ok('réparation automatique : "Fraternité animateur" détectée et désignée sans intervention humaine');
+  else ko('réparation automatique : détection', JSON.stringify(rapport));
+
+  m = await enAdminSql(`select montant from public.cotisations where lecteur_id=$1 and date_samedi=public.dernier_samedi()`, [lecAnim]);
+  if (m[0]?.montant === 100) ok('réparation automatique : historique déjà payé recalculé à 100 F');
+  else ko('réparation automatique : historique recalculé', JSON.stringify(m[0]));
+
+  const marqueurs = await enAdminSql(`select id from public.fraternites where system_key='animateur'`);
+  if (marqueurs.length === 1 && marqueurs[0].id === fratAnim) ok('réparation automatique : marqueur déplacé, jamais dupliqué');
+  else ko('réparation automatique : marqueur déplacé', JSON.stringify(marqueurs));
+
+  const orpheline = marqueAvant ? await enAdminSql(`select id from public.fraternites where id=$1`, [marqueAvant.id]) : [];
+  if (marqueAvant?.nom === 'Animateur' && orpheline.length === 0)
+    ok('réparation automatique : doublon vide "Animateur" nettoyé');
+  else ko('réparation automatique : nettoyage du doublon vide', JSON.stringify({ marqueAvant, orpheline }));
+
+  // Rejouer la réparation ne doit RIEN casser : la fraternité désignée a
+  // désormais des membres, donc plus aucun candidat n'est recherché.
+  const rejoue = (await enAdminSql(`select public.reparer_designation_fraternite_animateur() as r`))[0].r;
+  if (rejoue?.action === 'aucune' && rejoue.raison === 'deja_designee')
+    ok('réparation automatique : idempotente, ne retouche pas une désignation déjà en place');
+  else ko('réparation automatique : idempotence', JSON.stringify(rejoue));
+
+  for (const role of ['co', 'co_paroissial', 'caissier', 'responsable']) {
+    await attendRefus(`${role} ne peut pas lancer la réparation automatique`, role,
+      `select public.reparer_designation_fraternite_animateur() as r`);
+  }
+
+  // Cas ambigu : deux candidats plausibles ne doivent JAMAIS être tranchés au hasard.
+  await enAdminSql(`update public.fraternites set system_key=null where id=$1`, [fratAnim]);
+  const fratAnim2 = (await enAdminSql(`insert into public.fraternites (nom) values ('Animateurs du secteur') returning id`))[0].id;
+  const lecAnim2 = (await enAdminSql(`insert into public.lecteurs (nom, prenom, matricule, fraternite_id, created_at) values ('TEST', 'Ambigu', '', $1, '2020-01-01') returning id`, [fratAnim2]))[0].id;
+  const ambigu = (await enAdminSql(`select public.reparer_designation_fraternite_animateur() as r`))[0].r;
+  if (ambigu?.action === 'ambigu' && ambigu.candidats?.length === 2)
+    ok('réparation automatique : deux candidats plausibles → abstention (pas de choix au hasard)');
+  else ko('réparation automatique : abstention en cas d’ambiguïté', JSON.stringify(ambigu));
+  const marqueurs2 = await enAdminSql(`select id from public.fraternites where system_key='animateur'`);
+  if (marqueurs2.length === 0) ok('réparation automatique : aucun marqueur posé en cas d’ambiguïté');
+  else ko('réparation automatique : aucun marqueur en cas d’ambiguïté', JSON.stringify(marqueurs2));
+
+  // Nettoyage et restauration de l'état attendu par les sections suivantes.
+  await enAdminSql(`delete from public.cotisations where lecteur_id in ($1,$2)`, [lecAnim, lecAnim2]);
+  await enAdminSql(`delete from public.lecteurs where id in ($1,$2)`, [lecAnim, lecAnim2]);
+  await enAdminSql(`delete from public.fraternites where id in ($1,$2)`, [fratAnim, fratAnim2]);
+  await enAdminSql(`insert into public.fraternites (nom, responsables, system_key) values ('Animateur', array[]::text[], 'animateur')`);
+}
+
+// ---------------------------------------------------------------------------
 // Compteurs d'effectif : le tableau de bord doit annoncer le même nombre que
 // les vues globales Présences / Cotisations / Suivis (migration 20261004090000).
 // ---------------------------------------------------------------------------
@@ -348,6 +423,76 @@ await enAdminSql(`delete from public.cotisations where lecteur_id=$1 and date_sa
     `select public.changer_fraternite($1, $2)`, [l1.id, frat2]);
 }
 
+// ---------------------------------------------------------------------------
+// Annulation de la désignation automatique non revue (migration 20261004130000).
+//
+// La correction précédente avait un défaut grave : elle s'appliquait SEULE,
+// sans qu'aucun Admin ne vérifie que la fraternité détectée ne contient QUE
+// des animateurs. Cette migration doit annuler une telle désignation tant que
+// personne ne l'a revue, et NE JAMAIS toucher à une désignation qu'un Admin a
+// confirmée ou changée depuis.
+// ---------------------------------------------------------------------------
+{
+  const migrationAnnulation = readFileSync(
+    join(dossierMigrations, '20261004130000_annuler_designation_automatique_non_revue.sql'),
+    'utf8'
+  );
+
+  // --- Cas 1 : la désignation automatique est toujours en place, personne
+  //     ne l'a revue → elle doit être annulée.
+  const fratA = (await enAdminSql(`insert into public.fraternites (nom) values ('Fraternité animateur (cas 1)') returning id`))[0].id;
+  const lecA = (await enAdminSql(`insert into public.lecteurs (nom, prenom, matricule, fraternite_id, created_at) values ('X','Y','',$1,'2020-01-01') returning id`, [fratA]))[0].id;
+  await enAdminSql(`insert into public.cotisations (lecteur_id, date_samedi, paye) values ($1, public.dernier_samedi(), true)`, [lecA]);
+  await attendOk('cas 1 — préalable : réparation automatique lancée', 'admin',
+    `select public.reparer_designation_fraternite_animateur()`, []);
+  let m = await enAdminSql(`select montant from public.cotisations where lecteur_id=$1`, [lecA]);
+  if (m[0]?.montant === 100) ok('cas 1 — préalable : désignation automatique appliquée (100 F)');
+  else ko('cas 1 — préalable', JSON.stringify(m[0]));
+
+  await db.exec(migrationAnnulation);
+
+  const marque1 = await enAdminSql(`select id from public.fraternites where id=$1 and system_key='animateur'`, [fratA]);
+  if (marque1.length === 0) ok('cas 1 — annulation : le marqueur non revu est retiré');
+  else ko('cas 1 — annulation : le marqueur est retiré', JSON.stringify(marque1));
+  m = await enAdminSql(`select montant from public.cotisations where lecteur_id=$1`, [lecA]);
+  if (m[0]?.montant === 50) ok('cas 1 — annulation : la cotisation revient à 50 F');
+  else ko('cas 1 — annulation : la cotisation revient à 50 F', JSON.stringify(m[0]));
+
+  // Rejouer l'annulation ne doit rien casser (idempotence).
+  await db.exec(migrationAnnulation);
+  m = await enAdminSql(`select montant from public.cotisations where lecteur_id=$1`, [lecA]);
+  if (m[0]?.montant === 50) ok('cas 1 — annulation idempotente (rejouable sans effet)');
+  else ko('cas 1 — annulation idempotente', JSON.stringify(m[0]));
+
+  // --- Cas 2 : un Admin a confirmé/changé la désignation APRÈS la correction
+  //     automatique → l'annulation ne doit RIEN toucher.
+  const fratB = (await enAdminSql(`insert into public.fraternites (nom) values ('Fraternité animateur (cas 2)') returning id`))[0].id;
+  const lecB = (await enAdminSql(`insert into public.lecteurs (nom, prenom, matricule, fraternite_id, created_at) values ('X','Z','',$1,'2020-01-01') returning id`, [fratB]))[0].id;
+  await enAdminSql(`insert into public.cotisations (lecteur_id, date_samedi, paye) values ($1, public.dernier_samedi(), true)`, [lecB]);
+  await attendOk('cas 2 — préalable : réparation automatique lancée', 'admin',
+    `select public.reparer_designation_fraternite_animateur()`, []);
+
+  // L'Admin agit ensuite consciemment : il déplace le tarif vers une AUTRE
+  // fraternité ordinaire (geste explicite, journalisé sans `origine`).
+  const fratOrdinaire = (await enAdminSql(`insert into public.fraternites (nom) values ('Fraternité ordinaire post-revue') returning id`))[0].id;
+  await attendOk('cas 2 — préalable : Admin désigne explicitement une autre fraternité', 'admin',
+    `select public.definir_fraternite_animateur($1)`, [fratOrdinaire]);
+
+  await db.exec(migrationAnnulation);
+
+  const marque2 = await enAdminSql(`select id from public.fraternites where system_key='animateur'`);
+  if (marque2.length === 1 && marque2[0].id === fratOrdinaire)
+    ok('cas 2 — une désignation déjà revue par un Admin n’est jamais annulée');
+  else ko('cas 2 — désignation revue préservée', JSON.stringify(marque2));
+
+  // Nettoyage.
+  await enAdminSql(`delete from public.cotisations where lecteur_id in ($1,$2)`, [lecA, lecB]);
+  await enAdminSql(`delete from public.lecteurs where id in ($1,$2)`, [lecA, lecB]);
+  await enAdminSql(`update public.fraternites set system_key=null where system_key='animateur'`);
+  await enAdminSql(`delete from public.fraternites where id in ($1,$2,$3)`, [fratA, fratB, fratOrdinaire]);
+  await enAdminSql(`insert into public.fraternites (nom, responsables, system_key) values ('Animateur', array[]::text[], 'animateur')`);
+}
+
 await attendRefus('responsable ne modifie pas le nom d\'un lecteur', 'responsable',  `update public.lecteurs set nom = 'X' where id = $1 returning id`, [l1.id]);
 await attendRefus('caissier ne modifie pas le grade directement', 'caissier', `update public.lecteurs set grade_id = 3 where id = $1 returning id`, [l1.id]);
 await attendRefus('responsable ne peut plus faire d\'UPDATE direct de fraternite_id (policy fermée)', 'responsable',
@@ -362,10 +507,12 @@ await attendLignes('CO modifie la fiche (nom, grade)', 'co', `update public.lect
 await attendRefus('CO ne modifie pas le matricule (définitif)', 'co', `update public.lecteurs set matricule = 'LEC999' where id = $1 returning id`, [l1.id]);
 await attendLignes('CO paroissial a les mêmes droits que CO', 'co_paroissial', `update public.lecteurs set adresse = 'Akogbato' where id = $1 returning id`, [l1.id]);
 await attendOk('CO change le grade via RPC (historisé)', 'co', `select public.changer_grade($1, 3)`, [l1.id]);
+await attendOk('CO paroissial change le grade d’un lecteur ordinaire (mêmes droits que CO)', 'co_paroissial',
+  `select public.changer_grade($1, 2)`, [l1.id]);
 await attendRefus('caissier ne change pas le grade via RPC', 'caissier', `select public.changer_grade($1, 4)`, [l1.id]);
 {
   const r = await enAdminSql(`select count(*)::int n from public.lecteur_grades where lecteur_id = $1`, [l1.id]);
-  if (r[0].n === 2) ok('historique des grades : initial + changement = 2 lignes');
+  if (r[0].n === 4) ok('historique des grades : initial + 3 changements (CO, CO paroissial ×2) = 4 lignes');
   else ko('historique des grades', `${r[0].n} lignes`);
 }
 await attendRefus('personne ne supprime un lecteur (archivage seulement)', 'admin', `delete from public.lecteurs where id = $1 returning id`, [l1.id]);

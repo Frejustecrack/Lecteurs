@@ -2,14 +2,18 @@
  * Règle d'affichage des animateurs dans les vues de suivi hebdomadaire
  * (Présences et Cotisations).
  *
- * Les animateurs ne sont pas des lecteurs comme les autres : ils encadrent,
- * cotisent à un tarif distinct, et les mélanger aux lecteurs fausse la lecture
- * des totaux (effectif, dû, taux de présence). La **vue globale les exclut
- * donc**, et ils n'apparaissent que lorsque leur fraternité est explicitement
- * sélectionnée dans le filtre.
+ * Les animateurs ne sont pas des lecteurs comme les autres : ils encadrent et
+ * cotisent à un tarif distinct. Pour alléger la LISTE à pointer, la vue
+ * globale les exclut visuellement, et ils ne réapparaissent qu'en
+ * sélectionnant explicitement leur fraternité dans le filtre.
  *
- * Conséquence volontaire : en vue globale, les cartes de statistiques ne
- * comptent pas les animateurs. C'est le but — ces vues décrivent les lecteurs.
+ * Règle structurante, sans exception : **ce qu'on AFFICHE se filtre, ce qu'on
+ * COMPTE ne se filtre JAMAIS.** L'exclusion ci-dessus est un confort de
+ * lecture, rien de plus — les totaux financiers (dû, payé, caisse) et tout
+ * effectif comptable DOIVENT toujours inclure les animateurs, sans quoi
+ * l'écran ne correspond plus à l'argent réellement encaissé. Voir
+ * `filtrerParFraternite` (affichage, filtre) vs `filtrerPourTotaux` (calcul,
+ * ne filtre jamais) ci-dessous.
  */
 
 /** Tout ce dont le filtre a besoin d'une fraternité. */
@@ -108,6 +112,42 @@ export function compterAnimateurs<T extends LecteurFiltrable>(
 ): number {
   if (!animateurId) return 0;
   return lecteurs.filter((l) => l.fraternite_id === animateurId).length;
+}
+
+/** Tout ce dont la détection de candidat a besoin d'une fraternité. */
+export interface FraterniteCandidate extends FraterniteFiltrable {
+  nom: string;
+}
+
+/**
+ * Suggère une fraternité à désigner pour le tarif Animateur quand aucune
+ * fraternité AVEC MEMBRES ne porte actuellement le marqueur `system_key`.
+ *
+ * Reproduit côté interface exactement la même règle que la fonction SQL
+ * `reparer_designation_fraternite_animateur` (migration 20261004120000) :
+ * une communauté qui crée elle-même sa fraternité d'animateurs (« Fraternité
+ * animateur », « Animateurs », …) sans jamais utiliser l'écran de désignation
+ * se retrouve avec ses membres facturés au tarif normal, sans que rien ne
+ * l'explique. On repère ce cas pour l'afficher clairement.
+ *
+ * Ne devine jamais à l'aveugle : renvoie `null`
+ *  - si une fraternité marquée a déjà des membres (configuration saine) ;
+ *  - si aucun nom ne ressemble à « animateur » ;
+ *  - si plusieurs fraternités pourraient convenir (ambiguïté : à l'Admin de
+ *    trancher explicitement, voir l'écran Fraternités).
+ */
+export function candidatFraterniteAnimateur<
+  F extends FraterniteCandidate,
+  L extends LecteurFiltrable
+>(fraternites: readonly F[], lecteurs: readonly L[]): F | null {
+  const marquee = fraternites.find((f) => f.system_key === 'animateur');
+  const aDesMembres = (id: string) => lecteurs.some((l) => l.fraternite_id === id);
+  if (marquee && aDesMembres(marquee.id)) return null;
+
+  const candidats = fraternites.filter(
+    (f) => f.id !== marquee?.id && /animateur/i.test(f.nom) && aDesMembres(f.id)
+  );
+  return candidats.length === 1 ? candidats[0] : null;
 }
 
 /**

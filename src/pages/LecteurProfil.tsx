@@ -252,6 +252,16 @@ export default function LecteurProfil() {
     setFratSel(l?.fraternite_id ?? '');
   }, [l?.fraternite_id]);
 
+  // BUG CORRIGÉ : le select de grade restait bloqué sur sa valeur initiale
+  // (1, codée en dur) au lieu de suivre le grade RÉEL du lecteur affiché.
+  // Comme tout nouveau lecteur est créé avec grade_id = 1 par défaut, le
+  // bouton « Changer » se retrouvait grisé dès l'ouverture de la fiche pour
+  // la quasi-totalité des lecteurs (grade sélectionné = grade actuel), y
+  // compris pour un CO/CO paroissial parfaitement autorisé à l'utiliser.
+  useEffect(() => {
+    if (l) setNouveauxGrade(l.grade_id);
+  }, [l?.id, l?.grade_id]);
+
   const gradeNom = (gid: number) => grades.find((g) => g.id === gid)?.nom ?? '—';
   const auteurName = (uid: string | null) =>
     profiles.find((p) => p.id === uid)?.full_name ?? '—';

@@ -1,4 +1,5 @@
 import { rechercherLecteurs, trierLecteurs } from '../lib/lecteurs';
+import { candidatFraterniteAnimateur } from '../lib/fraternites';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -30,9 +31,10 @@ import {
 
 export default function Fraternites() {
   const { profile } = useAuth();
+  const isAdmin = estAdmin(profile?.role);
   const canEdit = peutGererLecteurs(profile?.role);
   const canDeleteOrdinaire = !!profile?.role; // toute fraternité ordinaire vide
-  const canDeleteSpeciale = estAdmin(profile?.role);
+  const canDeleteSpeciale = isAdmin;
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -53,6 +55,13 @@ export default function Fraternites() {
   const [selection, setSelection] = useState<string[]>([]);
   const [busyMembres, setBusyMembres] = useState(false);
   const [busyRetrait, setBusyRetrait] = useState<string | null>(null);
+
+  // --- Tarif Animateur : quelle fraternité en bénéficie (Admin uniquement).
+  // Déplacé ici depuis Administration → Paramètres : cette désignation se
+  // décide au vu des fraternités et de leurs membres, qui vivent sur CET
+  // écran — pas sur un écran de réglages séparé que personne ne consultait.
+  const [fratAnimateurSel, setFratAnimateurSel] = useState('');
+  const [busyAnimateur, setBusyAnimateur] = useState(false);
 
   const load = useCallback(async () => {
     const [rF, rL] = await Promise.all([
@@ -76,8 +85,14 @@ export default function Fraternites() {
       return;
     }
     setErreurChargement(false);
-    setFraternites((rF.data ?? []) as Fraternite[]);
-    setLecteurs(trierLecteurs((rL.data ?? []) as Lecteur[]));
+    const frats = (rF.data ?? []) as Fraternite[];
+    const lecs = trierLecteurs((rL.data ?? []) as Lecteur[]);
+    setFraternites(frats);
+    setLecteurs(lecs);
+    // Préremplit la sélection avec la désignation actuelle ; à défaut, avec
+    // le candidat détecté automatiquement (voir `candidatFraterniteAnimateur`).
+    const actuelle = frats.find((f) => f.system_key === 'animateur')?.id ?? '';
+    setFratAnimateurSel(actuelle || candidatFraterniteAnimateur(frats, lecs)?.id || '');
     setLoading(false);
   }, [toast]);
 
@@ -156,6 +171,48 @@ export default function Fraternites() {
       toast('Fraternité supprimée.');
       load();
     }
+  }
+
+  /**
+   * Déplace le tarif Animateur vers une autre fraternité.
+   *
+   * Le tarif spécial ne suit pas le NOM d'une fraternité mais un marqueur
+   * technique. Sans cette action, une communauté qui utilise sa propre
+   * fraternité d'animateurs voit ses membres facturés au tarif normal, sans
+   * aucun moyen de corriger depuis l'interface : poser le marqueur est
+   * interdit par trigger à tout compte applicatif, et l'unique point
+   * d'entrée autorisé est ce RPC réservé à l'Admin (migration 20261003234500,
+   * auto-détection renforcée par la migration 20261004120000).
+   */
+  async function designerFraterniteAnimateur() {
+    const cible = fratAnimateurSel || null;
+    const nom = fraternites.find((f) => f.id === cible)?.nom;
+    const actuelle = fraternites.find((f) => f.system_key === 'animateur');
+    if ((actuelle?.id ?? '') === (cible ?? '')) return;
+
+    const membres = cible
+      ? `Les cotisations DÉJÀ PAYÉES des membres de « ${nom} » seront recalculées au tarif Animateur.`
+      : 'Plus aucune fraternité ne bénéficiera du tarif Animateur.';
+    const ancienne = actuelle
+      ? `\n\nLes membres de « ${actuelle.nom} » repasseront au tarif normal, historique payé compris.`
+      : '';
+    if (!confirm(`${membres}${ancienne}\n\nContinuer ?`)) return;
+
+    setBusyAnimateur(true);
+    const { error } = await supabase.rpc('definir_fraternite_animateur', {
+      p_fraternite: cible,
+    });
+    setBusyAnimateur(false);
+    if (error) {
+      toast(traduireErreur(error, 'désigner la fraternité au tarif Animateur'), 'err');
+      return;
+    }
+    toast(
+      cible
+        ? `« ${nom} » applique désormais le tarif Animateur.`
+        : 'Le tarif Animateur ne s’applique plus à aucune fraternité.'
+    );
+    load();
   }
 
   // ------------------------------------------------------------- membres
@@ -275,6 +332,9 @@ export default function Fraternites() {
 
   if (loading) return <Spinner label="Chargement des fraternités…" />;
 
+  const animateurActuelle = fraternites.find((f) => f.system_key === 'animateur') ?? null;
+  const candidatAnimateur = candidatFraterniteAnimateur(fraternites, lecteurs);
+
   return (
     <div>
       <PageHeader
@@ -282,6 +342,80 @@ export default function Fraternites() {
         sub={`${fraternites.length} fraternité(s) — chaque lecteur n'appartient qu'à une fraternité`}
         actions={<BtnPrimary onClick={openCreate}>+ Nouvelle fraternité</BtnPrimary>}
       />
+
+      {/*
+        Le tarif Animateur (100 F) ne suit JAMAIS le nom d'une fraternité,
+        seulement cette désignation technique. Une fraternité qui ressemble à
+        « Fraternité animateur » mais qui n'a pas été désignée ici facture ses
+        membres au tarif normal sans que rien ne le signale ailleurs dans
+        l'application — c'est le bug exact que cette alerte rend visible.
+      */}
+      {candidatAnimateur && (
+        <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          <p className="font-semibold">
+            ⚠️ Le tarif Animateur (100 F) n'est associé à aucune fraternité ayant des
+            membres.
+          </p>
+          <p className="mt-1">
+            « {candidatAnimateur.nom} » semble être le bon groupe
+            {animateurActuelle ? ' — la fraternité système « Animateur » existe mais est vide' : ''}.
+            Tant que ce n'est pas corrigé, ses membres sont facturés au tarif normal (50 F)
+            dans Cotisations.
+          </p>
+          {isAdmin ? (
+            <button
+              type="button"
+              onClick={() => {
+                setFratAnimateurSel(candidatAnimateur.id);
+                designerFraterniteAnimateur();
+              }}
+              disabled={busyAnimateur}
+              className={`mt-2 rounded-lg bg-amber-600 px-3 py-1.5 font-semibold text-white hover:bg-amber-700 ${pressCls}`}
+            >
+              {busyAnimateur ? 'Application…' : `Appliquer le tarif Animateur à « ${candidatAnimateur.nom} »`}
+            </button>
+          ) : (
+            <p className="mt-1 text-xs">
+              Signalez-le à un Administrateur : lui seul peut appliquer cette correction
+              (section « Tarif Animateur » plus bas sur cette page).
+            </p>
+          )}
+        </div>
+      )}
+
+      {isAdmin && (
+        <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h3 className="text-sm font-bold text-slate-700">Tarif Animateur</h3>
+          <p className="mt-1 text-xs text-slate-400">
+            La fraternité choisie ici bénéficie du tarif spécial (réglé en montant depuis
+            Administration → Paramètres). Changer cette désignation recalcule
+            l'historique des cotisations déjà payées des deux fraternités concernées.
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <select
+              aria-label="Fraternité bénéficiant du tarif Animateur"
+              className={inputCls}
+              value={fratAnimateurSel}
+              onChange={(e) => setFratAnimateurSel(e.target.value)}
+            >
+              <option value="">— Aucune fraternité au tarif Animateur —</option>
+              {fraternites.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.nom}
+                </option>
+              ))}
+            </select>
+            <BtnPrimary
+              onClick={designerFraterniteAnimateur}
+              busy={busyAnimateur}
+              busyLabel="Application…"
+              disabled={(animateurActuelle?.id ?? '') === fratAnimateurSel}
+            >
+              Appliquer
+            </BtnPrimary>
+          </div>
+        </div>
+      )}
 
       {erreurChargement ? (
         <EmptyState msg="Les fraternités n'ont pas pu être chargées. Vérifiez votre connexion puis rechargez la page." />
