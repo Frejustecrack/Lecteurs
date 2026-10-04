@@ -219,6 +219,8 @@ for (const role of ['admin', 'co', 'caissier', 'responsable']) {
 }
 await attendOk('CO paroissial ajoute un membre à Animateur', 'co_paroissial',
   `select public.changer_fraternite($1, $2)`, [l1.id, animateur.id]);
+await attendOk('CO paroissial change le grade d’un membre d’Animateur', 'co_paroissial',
+  `select public.changer_grade($1, 2)`, [l1.id]);
 await attendOk('Caissier enregistre le tarif Animateur de 100 F', 'caissier',
   `insert into public.cotisations (lecteur_id, date_samedi, paye) values ($1, public.dernier_samedi(), true) returning id`, [l1.id]);
 let tarifAnimation = await enAdminSql(`select montant from public.cotisations where lecteur_id=$1 and date_samedi=public.dernier_samedi()`, [l1.id]);
@@ -505,10 +507,12 @@ await attendLignes('CO modifie la fiche (nom, grade)', 'co', `update public.lect
 await attendRefus('CO ne modifie pas le matricule (définitif)', 'co', `update public.lecteurs set matricule = 'LEC999' where id = $1 returning id`, [l1.id]);
 await attendLignes('CO paroissial a les mêmes droits que CO', 'co_paroissial', `update public.lecteurs set adresse = 'Akogbato' where id = $1 returning id`, [l1.id]);
 await attendOk('CO change le grade via RPC (historisé)', 'co', `select public.changer_grade($1, 3)`, [l1.id]);
+await attendOk('CO paroissial change le grade d’un lecteur ordinaire (mêmes droits que CO)', 'co_paroissial',
+  `select public.changer_grade($1, 2)`, [l1.id]);
 await attendRefus('caissier ne change pas le grade via RPC', 'caissier', `select public.changer_grade($1, 4)`, [l1.id]);
 {
   const r = await enAdminSql(`select count(*)::int n from public.lecteur_grades where lecteur_id = $1`, [l1.id]);
-  if (r[0].n === 2) ok('historique des grades : initial + changement = 2 lignes');
+  if (r[0].n === 4) ok('historique des grades : initial + 3 changements (CO, CO paroissial ×2) = 4 lignes');
   else ko('historique des grades', `${r[0].n} lignes`);
 }
 await attendRefus('personne ne supprime un lecteur (archivage seulement)', 'admin', `delete from public.lecteurs where id = $1 returning id`, [l1.id]);

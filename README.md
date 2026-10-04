@@ -594,3 +594,40 @@ Vérifications : `npm run verif:db` (annulation d'une désignation non revue,
 idempotence, non-régression si un Admin a confirmé/changé la désignation
 depuis) et l'ensemble `npm run verif:all` (223 + 284 + 19 + 35 + 23 + 37
 vérifications, toutes au vert).
+
+## Correction — bouton « Changer » le grade grisé par défaut (04/10/2026)
+
+### Problème corrigé
+
+Signalé : même un CO/CO paroissial, pourtant autorisé, ne parvenait plus à
+changer le grade d'un lecteur — le bouton restait grisé. Audit en base
+(`npm run verif:db`, rejoué avec le rôle `co_paroissial` sur un lecteur
+ordinaire et sur un membre de la fraternité Animateur) : la fonction
+`changer_grade()` et les droits associés fonctionnent sans défaut côté base.
+
+Le vrai bug était côté **interface** (`src/pages/LecteurProfil.tsx`),
+indépendant des migrations du jour : tout nouveau lecteur est créé avec
+`grade_id = 1` par défaut (réglage de la table), mais le menu « Grade » de la
+fiche lecteur initialisait sa sélection à `1` **en dur**, sans jamais la
+synchroniser avec le grade réel du lecteur affiché. Résultat : pour la
+quasi-totalité des lecteurs (ceux jamais encore promus, donc toujours au
+grade 1), la valeur pré-sélectionnée coïncidait avec le grade actuel dès
+l'ouverture de la fiche → le bouton « Changer » se retrouvait désactivé par
+défaut, même pour quelqu'un ayant parfaitement le droit de l'utiliser.
+
+### Correctif
+
+`src/pages/LecteurProfil.tsx` : un effet dédié aligne désormais la sélection
+du menu « Grade » sur le grade réel du lecteur à chaque chargement de la
+fiche (même mécanisme que celui déjà utilisé pour la sélection de
+fraternité). Le bouton « Changer » reste désactivé seulement tant qu'aucun
+grade différent n'a été sélectionné — plus jamais par erreur au premier
+affichage.
+
+Vérifié : `tsc --noEmit` (0 erreur), `npm run verif:all`
+(223+286+19+35+23+37 = 623 vérifications, 0 échec), `npm run build` (OK).
+Remarque : ce projet teste la base et la logique métier de façon approfondie,
+mais pas encore le rendu des composants React (pas d'infrastructure de test
+UI à ce jour) — ce type de bug d'état d'interface n'est donc pas automatisé ;
+une vérification visuelle rapide après déploiement reste recommandée pour ce
+genre de changement.
