@@ -71,7 +71,16 @@ export function deplaceMois(
 
 export function fmtDate(s: string | Date | null | undefined): string {
   if (!s) return '—';
-  const d = typeof s === 'string' ? new Date(s) : s;
+  // Une date « AAAA-MM-JJ » venant de Postgres est parsée comme minuit **UTC**
+  // par `new Date(s)` : affichée dans un fuseau à l'ouest de UTC (voyage, VPN),
+  // elle apparaît avec un jour de moins. On la reconstitue en minuit LOCAL :
+  // le rendu est alors identique quel que soit le fuseau du navigateur.
+  const d =
+    typeof s === 'string'
+      ? /^\d{4}-\d{2}-\d{2}$/.test(s)
+        ? new Date(`${s}T00:00:00`)
+        : new Date(s)
+      : s;
   if (isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('fr-FR', {
     day: '2-digit',

@@ -242,7 +242,7 @@ export default function Admin() {
             puis exécutez ici dans le SQL Editor :
             <pre className="mt-2 overflow-x-auto rounded-lg bg-white p-3 font-mono text-xs">
 {`select public.set_role('UUID_DU_COMPTE', 'caissier', 'Nom Prénom');
--- rôles possibles : admin | co | caissier | responsable`}
+-- rôles possibles : admin | co | co_paroissial | caissier | responsable`}
             </pre>
           </div>
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">

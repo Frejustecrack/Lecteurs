@@ -37,7 +37,7 @@ import { traduireErreur } from '../lib/errors';
 import { journaliserExport } from '../lib/journal';
 import {
   estAdmin,
-  estCaissier,
+  peutSaisirCotisations,
   peutExporter as rolePeutExporter,
   type Cotisation,
   type Fraternite,
@@ -62,7 +62,7 @@ type ModeVue = 'mois' | 'semaine';
 
 export default function Cotisations() {
   const { profile } = useAuth();
-  const isCaissier = estCaissier(profile?.role);
+  const peutSaisir = peutSaisirCotisations(profile?.role);
   const { toast } = useToast();
 
   const now = new Date();
@@ -223,9 +223,9 @@ export default function Cotisations() {
       );
       return;
     }
-    if (!isCaissier) {
+    if (!peutSaisir) {
       toast(
-        "Vous n'êtes pas autorisé à saisir les cotisations : cette opération est réservée aux Caissiers.",
+        "Vous n'êtes pas autorisé à saisir les cotisations : cette opération est réservée aux Caissiers et au CO paroissial.",
         'err'
       );
       return;
@@ -252,8 +252,8 @@ export default function Cotisations() {
   }
 
   async function marquerTous(paye: boolean) {
-    if (!isCaissier) {
-      toast('Réservé aux Caissiers.', 'err');
+    if (!peutSaisir) {
+      toast('Réservé aux Caissiers et au CO paroissial.', 'err');
       return;
     }
     if (samedisCotisables.length === 0) {
@@ -345,7 +345,7 @@ export default function Cotisations() {
     <div>
       <PageHeader
         title="Cotisations"
-        sub={`${fmtMoney(montantCot)} tarif normal · ${fmtMoney(montantAnimateur)} Animateur — saisie réservée aux Caissiers`}
+        sub={`${fmtMoney(montantCot)} tarif normal · ${fmtMoney(montantAnimateur)} Animateur — saisie réservée aux Caissiers et au CO paroissial`}
         actions={
           peutExporter ? (
             <BtnGhost
@@ -449,7 +449,7 @@ export default function Cotisations() {
           sub={
             nbAnimateursComptes > 0
               ? `dont ${nbAnimateursComptes} animateur(s) — ${filtered.length} affiché(s)`
-              : isCaissier
+              : peutSaisir
                 ? 'clic sur une case = payé/dû'
                 : 'lecture seule'
           }
@@ -501,7 +501,7 @@ export default function Cotisations() {
           aria-label="Rechercher un lecteur"
           className={`${inputCls} min-w-0 flex-1 sm:max-w-xs`}
         />
-        {isCaissier && filtered.length > 0 && samedisCotisables.length > 0 && (
+        {peutSaisir && filtered.length > 0 && samedisCotisables.length > 0 && (
           <div className="flex w-full gap-2 sm:w-auto">
             <button
               onClick={() => marquerTous(true)}
@@ -542,7 +542,7 @@ export default function Cotisations() {
                   else if (samediEstArrive(s)) du += 1;
                 }
               });
-              const clickable = !neant && isCaissier;
+              const clickable = !neant && peutSaisir;
               return (
                 <li key={l.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
                   <div className="min-w-0 flex-1">
@@ -561,8 +561,8 @@ export default function Cotisations() {
                     title={
                       neant
                         ? `Néant — Inscription ultérieure (1er samedi actif : ${fmtDate(premierSamediActif(l.created_at))})`
-                        : !isCaissier
-                          ? 'Lecture seule — saisie réservée aux Caissiers'
+                        : !peutSaisir
+                          ? 'Lecture seule — saisie réservée aux Caissiers et au CO paroissial'
                           : c?.paye
                             ? 'Payé — cliquez pour repasser en dû'
                             : duCeSamedi
@@ -637,7 +637,7 @@ export default function Cotisations() {
                       const c = !neant ? map.get(`${l.id}|${sam}`) : undefined;
                       const arrive = samediEstArrive(sam);
                       const duCeSamedi = !neant && !c?.paye && arrive;
-                      const clickable = !neant && isCaissier;
+                      const clickable = !neant && peutSaisir;
                       return (
                         <td key={sam} className="px-2 py-2 text-center">
                           <button
@@ -647,8 +647,8 @@ export default function Cotisations() {
                             title={
                               neant
                                 ? `Néant — Inscription ultérieure (1er samedi actif : ${fmtDate(premierSamediActif(l.created_at))})`
-                                : !isCaissier
-                                  ? "Lecture seule — saisie réservée aux Caissiers"
+                                : !peutSaisir
+                                  ? "Lecture seule — saisie réservée aux Caissiers et au CO paroissial"
                                   : c?.paye
                                     ? 'Payé — cliquez pour repasser en dû'
                                     : duCeSamedi
@@ -730,7 +730,7 @@ export default function Cotisations() {
                       const c = !neant ? map.get(`${l.id}|${sam}`) : undefined;
                       const arrive = samediEstArrive(sam);
                       const duCeSamedi = !neant && !c?.paye && arrive;
-                      const clickable = !neant && isCaissier;
+                      const clickable = !neant && peutSaisir;
                       return (
                         <td key={sam} className="px-2 py-2 text-center">
                           <button
@@ -740,8 +740,8 @@ export default function Cotisations() {
                             title={
                               neant
                                 ? `Néant — Inscription ultérieure (1er samedi actif : ${fmtDate(premierSamediActif(l.created_at))})`
-                                : !isCaissier
-                                  ? 'Lecture seule — saisie réservée aux Caissiers'
+                                : !peutSaisir
+                                  ? 'Lecture seule — saisie réservée aux Caissiers et au CO paroissial'
                                   : c?.paye
                                     ? 'Payé — cliquez pour repasser en dû'
                                     : duCeSamedi
@@ -776,9 +776,9 @@ export default function Cotisations() {
       <p className="mt-3 text-xs text-slate-400">
         Les samedis antérieurs à l'inscription d'un lecteur affichent <strong className="text-slate-500">Néant</strong> et ne génèrent aucun dû.
         Par défaut, un samedi arrivé actif est <strong className="text-alerte">dû</strong> :
-        tant que le Caissier n'a pas basculé la case au vert, le lecteur est
+        tant que le Caissier (ou le CO paroissial) n'a pas basculé la case au vert, le lecteur est
         considéré comme n'ayant pas payé. L'absence ne dispense pas du paiement.
-        Les samedis à venir ne génèrent pas encore de dû, mais le Caissier peut y enregistrer un paiement à l'avance. Les mois passés restent conservés et consultables.
+        Les samedis à venir ne génèrent pas encore de dû, mais le Caissier (ou le CO paroissial) peut y enregistrer un paiement à l'avance. Les mois passés restent conservés et consultables.
       </p>
     </div>
   );

@@ -194,7 +194,7 @@ export function estCO(role: Role | null | undefined): boolean {
   return role === 'co' || role === 'co_paroissial';
 }
 
-/** Caissier (saisie des cotisations). */
+/** Caissier (rôle strict — pour le droit de saisie, voir `peutSaisirCotisations`). */
 export function estCaissier(role: Role | null | undefined): boolean {
   return role === 'caissier';
 }
@@ -210,6 +210,26 @@ export function estCaissier(role: Role | null | undefined): boolean {
  */
 export function estCOParoissial(role: Role | null | undefined): boolean {
   return role === 'co_paroissial';
+}
+
+/**
+ * Saisie des cotisations (insert / update / delete) — **Caissier et CO
+ * paroissial**.
+ *
+ * Le cahier des charges réserve la saisie au Caissier ; depuis le 08/10/2026,
+ * le CO paroissial partage ce droit (migration `20261008120000` — fonction
+ * `public.peut_saisir_cotisations()`). À dessein :
+ *
+ *  - `co` (diocésain) ne saisit PAS de cotisations — comme pour la fraternité
+ *    « Animateur », la montée en gamme est réservée au seul CO paroissial ;
+ *  - `admin` et `responsable` ne saisissent pas non plus (matrice du CDC).
+ *
+ * Doit refléter EXACTEMENT `public.peut_saisir_cotisations()` en base, afin
+ * qu'aucun bouton visible ne débouche sur un refus RLS et qu'aucun droit réel
+ * ne reste invisible dans l'interface.
+ */
+export function peutSaisirCotisations(role: Role | null | undefined): boolean {
+  return estCaissier(role) || estCOParoissial(role);
 }
 
 /**
