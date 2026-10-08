@@ -106,6 +106,19 @@ Le schéma vit dans [`supabase/migrations/`](supabase/migrations) — **versionn
 | `20260915180000_realtime_caisse_evenements.sql` | Publie `caisse_operations`, `evenements`, `evenement_participants` et `evenement_paiements` dans `supabase_realtime` (le Dashboard écoutait `caisse_operations` sans qu'elle soit publiée) |
 | `20260916120000_securite_journal_rls.sql` | **Journal infalsifiable** : `log_action` retirée aux comptes applicatifs, `journal_client()` sur liste blanche (connexion, déconnexion, export) avec auteur forcé à `auth.uid()` ; clôture/réouverture/suppression d'événement et correction gelée déduites par le trigger d'audit. **`WITH CHECK`** sur toutes les policies UPDATE. Policy `lecteurs_update_fraternite` (UPDATE libre) supprimée — le RPC `changer_fraternite` est la seule voie. Un compte **sans rôle** ne peut plus rien écrire (`a_un_role()`). Vues d'agrégats `v_caisse_totaux` / `v_cotisations_par_annee` + index (200 lecteurs). |
 | `20260916150000_integrite_auteur_montant_agregats.sql` | **Intégrité côté base** : auteur (`recorded_by` / `created_by` / `registered_by`) forcé à `auth.uid()` par trigger sur toutes les tables métier ; montant et `paid_at` des cotisations fixés par la base (`montant_cotisation_courant()`), plus jamais par le client ; contrainte « samedi uniquement » sur présences et cotisations ; écriture refusée sur un lecteur archivé ; dates calculées en heure du Bénin (`aujourdhui_benin()`, `dernier_samedi()`). Vues mensuelles (`v_presences_par_mois`, `v_cotisations_par_mois`, `v_encaissements_par_mois`, `v_effectif_par_mois`), `v_evenements_avancement`, `v_lecteurs_compteurs` : le tableau de bord ne charge plus une seule ligne brute. |
+| `20260917120000_perf_200_indexes.sql` | Index composites pour la volumétrie 200 lecteurs + correctif de la race condition sur le matricule + garde-fou de capacité en base. |
+| `20260917150000_permissions.sql` | Module « Permissions » (absences autorisées) : table, trigger « samedis futurs uniquement », RLS (création Admin/CO, lecture tout rôle), immuable (pas d'UPDATE/DELETE), vue `v_permissions_lecteur`, publication realtime. |
+| `20260919120000_premier_samedi_actif.sql` | Règle d'entrée en vigueur : premier samedi actif d'un lecteur (heure du Bénin) ; bloque toute présence/cotisation antérieure à ce samedi. |
+| `20260919180000_premier_samedi_stats_partout.sql` | Le « premier samedi actif » est respecté dans toutes les statistiques (vues mensuelles cotisations/encaissements). |
+| `20260919200000_interdire_presences_futures.sql` | Interdit toute écriture sur une présence future — Admin inclus. Additive : les présences futures historiques restent lisibles mais figées. Les cotisations ne sont pas concernées. |
+| `20260919230000_anniversaires.sql` | Module « Anniversaires » : index, vue `v_anniversaires_mois` (mois courant au Bénin, lecteurs actifs, RLS), fonction `carte_anniversaire()`. |
+| `20261003213000_cotisations_anticipees_statistiques.sql` | Paiement anticipé : entre immédiatement dans la caisse, mais exclu du taux de cotisation du mois jusqu'à l'arrivée du samedi. |
+| `20261003220000_fraternite_animateur.sql` | Fraternité système « Animateur » (marqueur `system_key`, tarif 100 F) : `montant_cotisation_lecteur()`, recalcul de l'historique payé, appartenance réservée au CO paroissial. |
+| `20261003234500_designer_fraternite_animateur.sql` | `definir_fraternite_animateur()` : pose/déplace le marqueur « Animateur » (Admin uniquement) — le tarif suit le marqueur, pas le nom. |
+| `20261004090000_compteurs_hors_animateurs.sql` | Compteurs d'effectif : distinction lecteurs / animateurs (les vues globales excluent les animateurs, les totaux les comptent). |
+| `20261004120000_corriger_designation_fraternite_animateur.sql` | Réparation de la désignation « fraternité Animateur » constatée en production (`reparer_designation_fraternite_animateur()`). |
+| `20261004130000_annuler_designation_automatique_non_revue.sql` | Annule la désignation automatique non révisée par un humain (erreur corrigée). |
+| `20261008120000_co_paroissial_saisie_cotisations.sql` | **Saisie des cotisations ouverte au CO paroissial** : nouvelle fonction `public.peut_saisir_cotisations()` (`caissier` + `co_paroissial`) ; policies `cotisations_insert` / `cotisations_update` / `cotisations_delete` mises à jour. `is_caissier()` inchangée (rôle strict). Le Caissier ne perd aucun droit ; `co` (diocésain), `admin` et `responsable` ne saisissent toujours pas. |
 
 > `20260914150300_clean_test_data.sql` est **neutralisée** (contenu `select 1`) : un `TRUNCATE` n'a pas sa place dans une migration — toute nouvelle instance l'aurait rejouée. Le script vit dans `supabase/scripts/clean_test_data.sql`.
 
@@ -142,17 +155,33 @@ python3 -c "import pglast,sys; pglast.parse_sql(open(sys.argv[1]).read()); print
 | Supprimer fraternité **vide** | ✅ | ✅ | ✅ | ✅ |
 | Pointer présences | ✅ | ✅ | ✅ | ✅ |
 | Corriger présence gelée | ✅ | — | — | — |
-| Saisir cotisations | — | — | ✅ | — |
+| Saisir cotisations ¹ | — | — | ✅ | — |
 | Créer / modifier / **supprimer** événement, encaisser tranche, gérer caisse | — | ✅ | — | — |
 | Clôturer événement | — | ✅ | — | — |
 | Réouvrir événement terminé | ✅ | — | — | — |
 | Exporter PDF présences/cotisations/caisse | ✅ | ✅ | ✅ | — |
 | Exporter bilan événement / fiche lecteur | ✅ | ✅ | — | — |
 
-Le **CO paroissial** (`co` ou `co_paroissial`) a les mêmes droits que `co`, **en base et dans l'interface** :
+> ¹ **CO paroissial** : depuis la migration `20261008120000_co_paroissial_saisie_cotisations.sql`,
+> le CO paroissial partage avec le Caissier le droit de **saisir, modifier et
+> supprimer** les cotisations (fonction `public.peut_saisir_cotisations()` en
+> base, helper `peutSaisirCotisations()` dans l'interface). Le Caissier conserve
+> évidemment tous ses droits ; `co` (diocésain), `admin` et `responsable` ne
+> saisissent pas de cotisations.
+
+> **Écarts au cahier des charges** (décisions produit, tracées ici — le CDC §21
+> « Corrections logiques apportées » du document PDF n'est pas modifié) :
+> - **saisie des cotisations ouverte au CO paroissial** (CDC §5 : Caissier seul) —
+>   migration `20261008120000` ;
+> - **suppression d'une fraternité vide ouverte à tout rôle** (CDC §5 : Admin/CO
+>   seuls) — migration `20260914150000` ;
+> - **modules Permissions (absences autorisées) et Anniversaires** ajoutés,
+>   absents du CDC.
+
+Le **CO paroissial** (`co` ou `co_paroissial`) a les mêmes droits que `co`, **en base et dans l'interface** (à l'exception de la saisie des cotisations, partagée avec le Caissier — voir ¹ ci-dessus) :
 
 - côté base, `public.is_co()` renvoie vrai pour les deux libellés et la contrainte `profiles_role_check` les autorise ;
-- côté interface, toutes les pages passent par les helpers de [`src/lib/types.ts`](src/lib/types.ts) — `estCO()`, `estAdmin()`, `estCaissier()`, `peutExporter()`, `peutGererLecteurs()` — et jamais par une comparaison littérale `role === 'co'`.
+- côté interface, toutes les pages passent par les helpers de [`src/lib/types.ts`](src/lib/types.ts) — `estCO()`, `estAdmin()`, `estCaissier()`, `peutSaisirCotisations()`, `peutExporter()`, `peutGererLecteurs()` — et jamais par une comparaison littérale `role === 'co'`.
 
 > Ne pas réintroduire de `profile?.role === 'co'` dans une page : un CO paroissial
 > aurait le droit en base mais ne verrait pas les boutons correspondants.
@@ -188,7 +217,9 @@ Recommandé : **Authentication → Settings** → désactiver *Enable email sign
 | **Suivis** | `/suivis` | Récap `present/absent/nonSaisi/taux` via `src/lib/recap.ts`. Filtres *absents / assidus / saisie incomplète*, filtre samedi précis, fraternité, recherche, tri colonnes. Cartes sur mobile, tableau sur desktop. **Export PDF du récapitulatif tel qu'affiché** (mêmes samedis comptés, mêmes filtres, même tri), tracé via `log_action('export.pdf')`. |
 | **Cotisations** | `/cotisations` | 50 F / samedi / lecteur (paramétrable dans `app_settings`). Vue mensuelle/hebdo (même UX que Présences). Saisie **Caissier uniquement**, paiements anticipés autorisés pour les samedis à venir, pas de gel, mois passés modifiables. |
 | **Événements** | `/evenements`, `/evenements/:id` | Création par CO, inscription avec recherche par nom/prénom/matricule, paiements en tranches (trigger `check_tranche` : total ≤ participation), **suppression par CO/Admin** (cascade participants/paiements/caisse + log `evenement.suppression`), **clôture CO** `en_cours→termine` (policy `evenements_update` WITH CHECK) + réouverture Admin. |
-| **Caisse** | `/caisse` | Caisse générale = cotisations payées + encaissements − décaissements (`event_id IS NULL`). Opérations CO uniquement. Export PDF. |
+| **Caisse** | `/caisse` | Caisse générale = cotisations payées + encaissements − décaissements (`event_id IS NULL`). Opérations CO uniquement. **Liste des mouvements : encaissements et décaissements uniquement** (les cotisations encaissées figurent dans les totaux). Export PDF. |
+| **Permissions** | `/permissions` | Absences autorisées (un ou plusieurs samedis **à venir**), immuables une fois créées (pas d'UPDATE/DELETE en base), statut déduit des dates. Création Admin/CO. Filtres statut/fraternité/grade, recherche. |
+| **Anniversaires** | `/anniversaires` | Anniversaires du mois courant (vue `v_anniversaires_mois`, projection minimale), carte PDF individuelle avec le template officiel. |
 | **Administration** | `/admin` | Logs (400 derniers), comptes & rôles, montant cotisation — **Admin uniquement** (RLS `is_admin()`). |
 
 **Règle “à preuve du contraire” :** un samedi **arrivé** non pointé = **rouge** = absence (ou cotisation due). Un samedi **à venir** = neutre : il ne crée encore ni absence ni dette. Une cotisation peut néanmoins être payée à l'avance ; elle entre immédiatement dans la caisse, mais dans le taux du mois seulement lorsque le samedi arrive. Les samedis futurs restent exclus des statistiques de présence et de dette.
@@ -214,8 +245,8 @@ Sept exports PDF côté client (`src/pdf/export.ts` + `jspdf`/`jspdf-autotable`)
 ```
 public/                  fichiers servis tels quels à la racine du site
 ├─ _redirects            /* /index.html 200 — SPA Cloudflare Pages (deep links)
-├─ favicon.svg           icône d'onglet (monogramme CDLJ)
-└─ logo-cdlj.jpg         logo officiel 260×260 (repli + apple-touch-icon)
+├─ _headers              en-têtes de sécurité (CSP, X-Frame-Options, nosniff…)
+└─ favicon.svg           icône d'onglet (monogramme CDLJ)
 
 src/
 ├─ App.tsx               routes + RequireAuth / RequireAdmin + ConfigManquante
@@ -319,6 +350,11 @@ Les 8 tables publiées dans `supabase_realtime` sont : `presences`, `cotisations
   VITE_SUPABASE_PUBLISHABLE_KEY=...
   ```
 - SPA : [`public/_redirects`](public/_redirects) contient déjà `/* /index.html 200`. Vite copie `public/` dans `dist/`, Cloudflare Pages le lit au déploiement : sans ce fichier, un rafraîchissement sur `/lecteurs/:id` ou `/evenements/:id` renvoie une 404.
+- Sécurité : [`public/_headers`](public/_headers) applique à chaque réponse une
+  **CSP** (scripts `'self'`, Supabase seul en `connect-src`), `X-Frame-Options: DENY`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy` et `Permissions-Policy`.
+  Le JWT Supabase vit en `localStorage` : sans CSP, une injection XSS suffirait à
+  le voler.
 - Icônes : `public/favicon.svg` (navigateurs récents) et `src/assets/logo-cdlj.jpg` (repli + `apple-touch-icon`, référencé dans `index.html` et émis par Vite dans `dist/assets/`).
 
 **Supabase** : connecter le repo (Settings → Git) sur `main` pour que les migrations s'appliquent auto. Sinon exécuter les fichiers `supabase/migrations/*.sql` manuellement dans le SQL Editor, dans l'ordre chronologique.

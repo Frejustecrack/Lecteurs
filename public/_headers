@@ -1,0 +1,14 @@
+# En-têtes de sécurité — Cloudflare Pages lit ce fichier à la racine du déploiement.
+# Le JWT Supabase vit en localStorage : sans CSP, une injection XSS suffirait à le
+# voler. La politique est volontairement stricte mais compatible avec l'app :
+#  - script-src 'self'        : Vite ne génère aucun script inline en production
+#  - style-src 'unsafe-inline': attributs style React (fond de connexion, etc.)
+#  - fonts.googleapis/gstatic   : police Inter chargée par index.html
+#  - img-src data: blob:      : logos base64 (en-tête PDF) et PDF générés (blob)
+#  - connect-src *.supabase.co: REST + WebSocket Realtime
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()

@@ -16,7 +16,20 @@ supabase/
 │   ├── 20260915120000_rename_grades_animation.sql
 │   └── 20260915180000_realtime_caisse_evenements.sql
 │   ├── 20260916120000_securite_journal_rls.sql
-│   └── 20260916150000_integrite_auteur_montant_agregats.sql
+│   ├── 20260916150000_integrite_auteur_montant_agregats.sql
+│   ├── 20260917120000_perf_200_indexes.sql
+│   ├── 20260917150000_permissions.sql
+│   ├── 20260919120000_premier_samedi_actif.sql
+│   ├── 20260919180000_premier_samedi_stats_partout.sql
+│   ├── 20260919200000_interdire_presences_futures.sql
+│   ├── 20260919230000_anniversaires.sql
+│   ├── 20261003213000_cotisations_anticipees_statistiques.sql
+│   ├── 20261003220000_fraternite_animateur.sql
+│   ├── 20261003234500_designer_fraternite_animateur.sql
+│   ├── 20261004090000_compteurs_hors_animateurs.sql
+│   ├── 20261004120000_corriger_designation_fraternite_animateur.sql
+│   ├── 20261004130000_annuler_designation_automatique_non_revue.sql
+│   └── 20261008120000_co_paroissial_saisie_cotisations.sql
 └── scripts/
     ├── seed-comptes.sql       ← attribution des rôles — à exécuter UNE fois (SQL Editor)
     └── clean_test_data.sql    ← remise à zéro — UNE fois, jamais en migration
@@ -26,8 +39,8 @@ supabase/
 
 | Objet | Détail |
 | --- | --- |
-| 14 tables | `grades`, `profiles`, `fraternites`, `lecteurs`, `lecteur_grades`, `presences`, `cotisations`, `app_settings`, `evenements`, `evenement_participants`, `evenement_paiements`, `caisse_operations`, `appreciations`, `logs` |
-| Politiques RLS | droits par rôle (`is_admin()`, `is_co()`, `is_caissier()`), gel des présences passées, clôture des événements (WITH CHECK), suppression fraternité vide, `lecteurs_update_fraternite` |
+| 15 tables | `grades`, `profiles`, `fraternites`, `lecteurs`, `lecteur_grades`, `presences`, `cotisations`, `permissions`, `app_settings`, `evenements`, `evenement_participants`, `evenement_paiements`, `caisse_operations`, `appreciations`, `logs` |
+| Politiques RLS | droits par rôle (`is_admin()`, `is_co()`, `is_caissier()`, `peut_saisir_cotisations()`), gel des présences passées, clôture des événements (WITH CHECK), suppression fraternité vide, `lecteurs_update_fraternite` |
 | Triggers | matricule automatique `LEC100…`, historique de grade, plafond des tranches de paiement, `updated_at`, `check_lecteur_update`, journal d'audit sur 10 tables |
 | Fonctions sensibles | `changer_grade()` (Admin + CO), `changer_fraternite()` (tout connecté), `log_action()` (tout compte connecté), `set_role()` (**SQL Editor uniquement**) |
 | Realtime | publication `supabase_realtime` (8 tables, `replica identity full`) : `presences`, `cotisations`, `lecteurs`, `fraternites` + `caisse_operations`, `evenements`, `evenement_participants`, `evenement_paiements` |
@@ -52,6 +65,19 @@ Une migration **déjà appliquée ne se modifie jamais**. On ajoute un nouveau f
 
 | `20260916120000_securite_journal_rls.sql` | **Journal infalsifiable** : `log_action` révoquée aux comptes applicatifs ; `journal_client()` (liste blanche : connexion, déconnexion, export PDF ; auteur forcé à `auth.uid()`) ; le trigger d'audit qualifie lui-même `evenement.cloture` / `evenement.reouverture` / `evenement.suppression` / `presence.correction_gelee`. **`WITH CHECK`** sur `presences_update`, `caisse_update`, `epaiements_update` ; `caisse_delete` fermé au CO sur événement clôturé. `lecteurs_update_fraternite` supprimée (le RPC est la seule voie). `a_un_role()` : un compte sans rôle ne peut plus rien écrire. `set_role` accepte `co_paroissial`. Vues `v_caisse_totaux`, `v_cotisations_par_annee` (security invoker) + 6 index. Idempotente, vérifiée par `npm run verif:db`. |
 | `20260916150000_integrite_auteur_montant_agregats.sql` | **Intégrité côté base** : triggers `forcer_auteur()` / `forcer_recorded_by_update()` (auteur = `auth.uid()`), `fixer_montant_cotisation()` (montant depuis `app_settings`, `paid_at` géré par la base), CHECK `isodow = 6` sur `presences` et `cotisations` (validée après contrôle, avertissement si violation historique), `refuser_lecteur_archive()`, `aujourdhui_benin()` / `dernier_samedi()` en `Africa/Lagos`, `handle_new_user` ne lit plus `raw_user_meta_data`. Vues `security_invoker` : `v_presences_par_mois`, `v_cotisations_par_mois`, `v_encaissements_par_mois`, `v_effectif_par_mois`, `v_evenements_avancement`, `v_lecteurs_compteurs`. Idempotente, vérifiée par `npm run verif:db` (203 lecteurs, > 10 000 lignes). |
+| `20260917120000_perf_200_indexes.sql` | Index composites pour la volumétrie 200 lecteurs + correctif de la race condition sur le matricule + garde-fou de capacité en base. |
+| `20260917150000_permissions.sql` | Module « Permissions » (absences autorisées) : table, trigger « samedis futurs uniquement », RLS (création Admin/CO, lecture tout rôle), immuable (pas d'UPDATE/DELETE), vue `v_permissions_lecteur`, publication realtime. |
+| `20260919120000_premier_samedi_actif.sql` | Règle d'entrée en vigueur : premier samedi actif d'un lecteur (heure du Bénin) ; bloque toute présence/cotisation antérieure à ce samedi. |
+| `20260919180000_premier_samedi_stats_partout.sql` | Le « premier samedi actif » est respecté dans toutes les statistiques (vues mensuelles cotisations/encaissements). |
+| `20260919200000_interdire_presences_futures.sql` | Interdit toute écriture sur une présence future — Admin inclus. Additive : les présences futures historiques restent lisibles mais figées. Les cotisations ne sont pas concernées. |
+| `20260919230000_anniversaires.sql` | Module « Anniversaires » : index, vue `v_anniversaires_mois` (mois courant au Bénin, lecteurs actifs, RLS), fonction `carte_anniversaire()`. |
+| `20261003213000_cotisations_anticipees_statistiques.sql` | Paiement anticipé : entre immédiatement dans la caisse, mais exclu du taux de cotisation du mois jusqu'à l'arrivée du samedi. |
+| `20261003220000_fraternite_animateur.sql` | Fraternité système « Animateur » (marqueur `system_key`, tarif 100 F) : `montant_cotisation_lecteur()`, recalcul de l'historique payé, appartenance réservée au CO paroissial. |
+| `20261003234500_designer_fraternite_animateur.sql` | `definir_fraternite_animateur()` : pose/déplace le marqueur « Animateur » (Admin uniquement) — le tarif suit le marqueur, pas le nom. |
+| `20261004090000_compteurs_hors_animateurs.sql` | Compteurs d'effectif : distinction lecteurs / animateurs (les vues globales excluent les animateurs, les totaux les comptent). |
+| `20261004120000_corriger_designation_fraternite_animateur.sql` | Réparation de la désignation « fraternité Animateur » constatée en production (`reparer_designation_fraternite_animateur()`). |
+| `20261004130000_annuler_designation_automatique_non_revue.sql` | Annule la désignation automatique non révisée par un humain (erreur corrigée). |
+| `20261008120000_co_paroissial_saisie_cotisations.sql` | **Saisie des cotisations ouverte au CO paroissial** : fonction `peut_saisir_cotisations()` (`caissier` + `co_paroissial`) ; policies `cotisations_insert` / `cotisations_update` / `cotisations_delete` mises à jour. `is_caissier()` inchangée. Le Caissier ne perd aucun droit ; `co` (diocésain), `admin` et `responsable` ne saisissent toujours pas. Idempotente, vérifiée par `npm run verif:db`. |
 
 ### Scripts manuels (`scripts/`)
 

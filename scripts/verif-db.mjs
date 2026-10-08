@@ -586,12 +586,14 @@ await en('caissier', `delete from public.cotisations where lecteur_id=$1 and dat
 await attendRefus('responsable ne supprime pas une présence', 'responsable', `delete from public.presences where lecteur_id = $1 returning id`, [l1.id]);
 
 // ---------------------------------------------------------------------------
-// 5. Cotisations — caissier uniquement
+// 5. Cotisations — saisie : caissier + co_paroissial (20261008120000)
 // ---------------------------------------------------------------------------
 section('5. Cotisations');
 await attendRefus('responsable ne saisit pas de cotisation', 'responsable',
   `insert into public.cotisations (lecteur_id, date_samedi, paye, montant, paid_at) values ($1, $2, true, 50, now()) returning id`, [l1.id, dernier]);
 await attendRefus('CO ne saisit pas de cotisation', 'co',
+  `insert into public.cotisations (lecteur_id, date_samedi, paye, montant, paid_at) values ($1, $2, true, 50, now()) returning id`, [l1.id, dernier]);
+await attendRefus('admin ne saisit pas de cotisation (matrice du cahier des charges)', 'admin',
   `insert into public.cotisations (lecteur_id, date_samedi, paye, montant, paid_at) values ($1, $2, true, 50, now()) returning id`, [l1.id, dernier]);
 await attendOk('caissier saisit une cotisation (samedi gelé : pas de gel)', 'caissier',
   `insert into public.cotisations (lecteur_id, date_samedi, paye, montant, paid_at) values ($1, $2, true, 50, now()) returning id`, [l1.id, gele]);
@@ -599,6 +601,17 @@ await attendOk('caissier saisit une cotisation (dernier samedi)', 'caissier',
   `insert into public.cotisations (lecteur_id, date_samedi, paye, montant, paid_at) values ($1, $2, true, 50, now()) returning id`, [l1.id, dernier]);
 await attendRefus('doublon lecteur+samedi refusé (unique)', 'caissier',
   `insert into public.cotisations (lecteur_id, date_samedi, paye, montant) values ($1, $2, true, 50) returning id`, [l1.id, dernier]);
+// 20261008120000 : le CO paroissial partage désormais le droit de saisie du
+// Caissier (insert / update / delete). On emploie un samedi encore libre
+// (`gele` = dernier-7 est déjà pris par le caissier juste au-dessus).
+const rCp = await attendOk('CO paroissial saisit une cotisation (même droit que le caissier)', 'co_paroissial',
+  `insert into public.cotisations (lecteur_id, date_samedi, paye, recorded_by) values ($1, public.dernier_samedi() - 14, true, $2) returning id, recorded_by`, [l1.id, U.admin]);
+if (rCp.rows?.[0]?.recorded_by === U.co_paroissial) ok('CO paroissial : recorded_by forcé à auth.uid() par la base');
+else ko('recorded_by forcé (co_paroissial)', JSON.stringify(rCp.rows?.[0]));
+await attendLignes('CO paroissial modifie une cotisation', 'co_paroissial',
+  `update public.cotisations set paye = false where lecteur_id = $1 and date_samedi = public.dernier_samedi() - 14 returning id`, [l1.id]);
+await attendLignes('CO paroissial supprime une cotisation', 'co_paroissial',
+  `delete from public.cotisations where lecteur_id = $1 and date_samedi = public.dernier_samedi() - 14 returning id`, [l1.id]);
 await attendRefus('responsable ne modifie pas le montant de cotisation (app_settings)', 'responsable',
   `update public.app_settings set value = '1' where key = 'montant_cotisation' returning key`);
 await attendLignes('admin modifie le montant de cotisation', 'admin',

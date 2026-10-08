@@ -5,10 +5,15 @@
  * ne peuvent dépasser l'année en cours — et l'adhésion ne peut pas précéder
  * la naissance.
  */
+import { aujourdhuiBenin } from './dates.ts';
 
-/** Année civile en cours (fuseau de l'utilisateur). */
+/**
+ * Année civile en cours **au Bénin** (Africa/Lagos) — et non dans le fuseau
+ * du navigateur : `new Date().getFullYear()` décalait d'un an le 31 décembre
+ * au soir pour tout utilisateur à l'ouest de UTC.
+ */
 export function anneeCourante(): number {
-  return new Date().getFullYear();
+  return aujourdhuiBenin().getFullYear();
 }
 
 /** Année minimale acceptée (garde-fou contre les saisies aberrantes). */

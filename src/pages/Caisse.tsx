@@ -38,7 +38,8 @@ import { exportCaisse } from '../pdf/export';
 
 interface Ligne {
   date: string;
-  type: 'cotisation' | 'encaissement' | 'decaissement';
+  /** Uniquement les mouvements de caisse — les cotisations ne sont pas listées ici. */
+  type: 'encaissement' | 'decaissement';
   libelle: string;
   montant: number;
   auteur: string;
@@ -68,7 +69,6 @@ export default function Caisse() {
   /** Cotisations de l'année affichée (vue v_cotisations_par_annee). */
   const [cotAnnee, setCotAnnee] = useState(0);
   const [ops, setOps] = useState<CaisseOperation[]>([]);
-  const [lecteurs, setLecteurs] = useState<Lecteur[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyExport, setBusyExport] = useState(false);
@@ -108,13 +108,14 @@ export default function Caisse() {
           .order('created_at')
           .range(de, a)
       ),
-      // 200 lecteurs max : colonnes minimales, paginé pour éviter troncature PostgREST
-      // created_at : règle « premier samedi actif » — la liste des mouvements
-      // doit afficher exactement ce que comptent les vues d'agrégats.
+      // 200 lecteurs max : colonnes minimales, paginé pour éviter troncature PostgREST.
+      // `created_at` sert au filtre « premier samedi actif » des cotisations du
+      // mois (KPI « Récolté ce mois ») : le total doit afficher exactement ce
+      // que comptent les vues d'agrégats.
       toutesLesLignes<Lecteur>((de, a) =>
         supabase
           .from('lecteurs')
-          .select('id, matricule, created_at')
+          .select('id, created_at')
           .order('matricule')
           .range(de, a)
       ),
@@ -131,7 +132,6 @@ export default function Caisse() {
     const a = (rAn.data ?? null) as { total: number } | null;
     setCotAnnee(a ? Number(a.total) : 0);
     setOps((rO.data ?? []) as CaisseOperation[]);
-    setLecteurs((rL.data ?? []) as Lecteur[]);
     setProfiles((rP.data ?? []) as Profile[]);
     setLoading(false);
   }, [annee, mois]);
@@ -177,21 +177,15 @@ export default function Caisse() {
     .reduce((s, o) => s + (o.type === 'encaissement' ? o.montant : -o.montant), 0);
   const cumulAnnee = cotAnnee + opsAnnee;
 
+  // Liste des mouvements : UNIQUEMENT les encaissements et décaissements de la
+  // caisse générale. Les cotisations encaissées restent visibles dans les
+  // totaux (KPI « Récolté ce mois », solde général, cumul annuel), mais ne sont
+  // plus listées ligne à ligne.
   const lignes: Ligne[] = useMemo(() => {
     const moisDebut = dateISO(new Date(annee, mois, 1));
     const moisFin = dateISO(new Date(annee, mois + 1, 0, 23, 59));
-    const mapLect = new Map(lecteurs.map((l) => [l.id, l.matricule]));
     const mapProf = new Map(profiles.map((p) => [p.id, p.full_name ?? '—']));
-    const cots: Ligne[] = cotsMois
-      .filter((c) => c.date_samedi >= moisDebut && c.date_samedi <= moisFin)
-      .map((c) => ({
-        date: c.date_samedi,
-        type: 'cotisation' as const,
-        libelle: `Cotisation — ${mapLect.get(c.lecteur_id) ?? '—'}`,
-        montant: c.montant,
-        auteur: mapProf.get(c.recorded_by ?? '') ?? '—',
-      }));
-    const opsLignes: Ligne[] = ops
+    return ops
       .filter((o) => {
         const d = o.created_at.slice(0, 10);
         return d >= moisDebut && d <= moisFin;
@@ -202,9 +196,9 @@ export default function Caisse() {
         libelle: `${o.type === 'encaissement' ? 'Encaissement' : 'Décaissement'} — ${o.motif}`,
         montant: o.montant,
         auteur: mapProf.get(o.recorded_by ?? '') ?? '—',
-      }));
-    return [...cots, ...opsLignes].sort((a, b) => (a.date < b.date ? 1 : -1));
-  }, [cotsMois, ops, lecteurs, profiles, annee, mois]);
+      }))
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+  }, [ops, profiles, annee, mois]);
 
   async function ajouterOp() {
     if (!isCO) {
@@ -365,63 +359,81 @@ export default function Caisse() {
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-4 py-3">
           <h3 className="text-sm font-bold text-slate-700">
-            Mouvements — {moisLabel(annee, mois)}
+            Encaissements &amp; décaissements — {moisLabel(annee, mois)}
           </h3>
         </div>
         {lignes.length === 0 ? (
           <div className="p-4">
-            <EmptyState msg="Aucun mouvement sur ce mois." />
+            <EmptyState msg="Aucun encaissement ni décaissement sur ce mois." />
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[520px] text-left text-sm">
-              <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="px-4 py-2">Date</th>
-                  <th className="px-4 py-2">Type</th>
-                  <th className="px-4 py-2">Libellé</th>
-                  <th className="px-4 py-2">Auteur</th>
-                  <th className="px-4 py-2 text-right">Montant</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {lignes.map((l, i) => (
-                  <tr key={i} className="hover:bg-slate-50/60">
-                    <td className="whitespace-nowrap px-4 py-2 text-slate-500">
-                      {fmtDate(l.date)}
-                    </td>
-                    <td className="px-4 py-2">
-                      <Badge
-                        tone={
-                          l.type === 'cotisation'
-                            ? 'blue'
-                            : l.type === 'encaissement'
-                              ? 'green'
-                              : 'red'
-                        }
-                      >
-                        {l.type === 'cotisation'
-                          ? 'Cotisation'
-                          : l.type === 'encaissement'
-                            ? 'Encaissement'
-                            : 'Décaissement'}
+          <>
+            {/* Mobile : cartes, aucun scroll horizontal */}
+            <ul className="divide-y divide-slate-100 sm:hidden">
+              {lignes.map((l, i) => (
+                <li key={i} className="flex items-center justify-between gap-3 p-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <Badge tone={l.type === 'encaissement' ? 'green' : 'red'}>
+                        {l.type === 'encaissement' ? 'Encaissement' : 'Décaissement'}
                       </Badge>
-                    </td>
-                    <td className="px-4 py-2 break-words">{l.libelle}</td>
-                    <td className="px-4 py-2 text-slate-500">{l.auteur}</td>
-                    <td
-                      className={`whitespace-nowrap px-4 py-2 text-right font-semibold ${
-                        l.type === 'decaissement' ? 'text-alerte' : 'text-emerald-600'
-                      }`}
-                    >
-                      {l.type === 'decaissement' ? '− ' : '+ '}
-                      {fmtMoney(l.montant)}
-                    </td>
+                      <span className="text-xs text-slate-500">{fmtDate(l.date)}</span>
+                    </div>
+                    <div className="mt-0.5 truncate text-sm font-medium text-slate-800">
+                      {l.libelle}
+                    </div>
+                    <div className="text-xs text-slate-500">{l.auteur}</div>
+                  </div>
+                  <div
+                    className={`whitespace-nowrap text-sm font-bold ${
+                      l.type === 'decaissement' ? 'text-alerte' : 'text-emerald-600'
+                    }`}
+                  >
+                    {l.type === 'decaissement' ? '− ' : '+ '}
+                    {fmtMoney(l.montant)}
+                  </div>
+                </li>
+              ))}
+            </ul>
+            {/* Desktop : tableau */}
+            <div className="hidden overflow-x-auto sm:block">
+              <table className="w-full min-w-[520px] text-left text-sm">
+                <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-4 py-2">Date</th>
+                    <th className="px-4 py-2">Type</th>
+                    <th className="px-4 py-2">Libellé</th>
+                    <th className="px-4 py-2">Auteur</th>
+                    <th className="px-4 py-2 text-right">Montant</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {lignes.map((l, i) => (
+                    <tr key={i} className="hover:bg-slate-50/60">
+                      <td className="whitespace-nowrap px-4 py-2 text-slate-500">
+                        {fmtDate(l.date)}
+                      </td>
+                      <td className="px-4 py-2">
+                        <Badge tone={l.type === 'encaissement' ? 'green' : 'red'}>
+                          {l.type === 'encaissement' ? 'Encaissement' : 'Décaissement'}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-2 break-words">{l.libelle}</td>
+                      <td className="px-4 py-2 text-slate-500">{l.auteur}</td>
+                      <td
+                        className={`whitespace-nowrap px-4 py-2 text-right font-semibold ${
+                          l.type === 'decaissement' ? 'text-alerte' : 'text-emerald-600'
+                        }`}
+                      >
+                        {l.type === 'decaissement' ? '− ' : '+ '}
+                        {fmtMoney(l.montant)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-2 text-xs text-slate-400">
           <span>
@@ -436,9 +448,9 @@ export default function Caisse() {
       </div>
 
       <p className="mt-3 text-xs text-slate-400">
-        Un décaissement déduit du solde général sans modifier le montant mensuel
-        récolté. Les caisses des événements sont gérées dans la page de chaque
-        événement.
+        La liste ne montre que les encaissements et décaissements de la caisse
+        générale ; les cotisations encaissées figurent dans les totaux ci-dessus.
+        Les caisses des événements sont gérées dans la page de chaque événement.
       </p>
     </div>
   );

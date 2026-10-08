@@ -14,6 +14,7 @@ import {
   dernierSamedi,
   estAvantPremierSamediActif,
   estGelee,
+  fmtDate,
   lundiDeSemaine,
   numeroSemaine,
   premierSamediActifISO,
@@ -42,10 +43,12 @@ import {
 import {
   ROLE_LABELS,
   ROLE_LABELS_ADMIN,
+  estCaissier,
   estCO,
   estCOParoissial,
   peutDeplacerEntreFraternites,
   peutGererMembresFraternite,
+  peutSaisirCotisations,
   type Lecteur,
   type Role,
 } from '../src/lib/types.ts';
@@ -196,10 +199,24 @@ verif('26/09/2026 (samedi suivant) n est pas avant le premier samedi actif', !es
 verif('created_at manquant -> aucun samedi n est exclu', !estAvantPremierSamediActif('2026-09-05', undefined) && !estAvantPremierSamediActif('2026-09-05', null));
 
 // ============================================================================
+console.log('\n── fmtDate : pas de décalage de jour selon le fuseau du navigateur ───');
+// ============================================================================
+// `new Date('2026-10-03')` vaut minuit UTC : à l'ouest de UTC, l'ancienne
+// version affichait 02/10. Une date « AAAA-MM-JJ » est désormais reconstituée
+// en minuit LOCAL : le rendu est identique quel que soit le fuseau du
+// navigateur (vérifié avec TZ=America/New_York et TZ=Pacific/Kiritimati).
+eq('date AAAA-MM-JJ affichée telle quelle', fmtDate('2026-10-03'), '03/10/2026');
+eq('date AAAA-MM-JJ en début de mois', fmtDate('2026-01-01'), '01/01/2026');
+eq('fmtDate(null) = —', fmtDate(null), '—');
+eq('fmtDate(undefined) = —', fmtDate(undefined), '—');
+eq('fmtDate invalide = —', fmtDate('bidon'), '—');
+verif('un objet Date local est accepté', fmtDate(new Date(2026, 9, 3)) === '03/10/2026');
+
+// ============================================================================
 console.log('\n── Validation : années de naissance et d’adhésion ───────────────────');
 // ============================================================================
 const annee = anneeCourante();
-eq('année courante', annee, new Date().getFullYear());
+eq('année courante (fuseau Bénin, pas celui du navigateur)', annee, aujourdhuiBenin().getFullYear());
 eq('borne haute de l’année d’adhésion = année courante', bornesAnneeAdhesion().max, annee);
 eq('borne haute de la date de naissance = 31/12 de l’année courante', bornesAnneeNaissance().max, `${annee}-12-31`);
 
@@ -744,8 +761,9 @@ console.log('\n── Temps réel : regroupement et non-superposition des rechar
     );
   }
 
-  // --- `co` et `co_paroissial` restent des alias PARTOUT AILLEURS : la
-  //     distinction ne doit exister que sur la fraternité système.
+  // --- `co` et `co_paroissial` restent des alias presque partout : la
+  //     distinction n’existe que sur la fraternité système (Animateur) et,
+  //     côté CO, sur la saisie des cotisations (voir bloc ci-dessous).
   verif(
     'co et co_paroissial restent des alias pour estCO()',
     estCO('co') && estCO('co_paroissial')
@@ -775,6 +793,34 @@ console.log('\n── Temps réel : regroupement et non-superposition des rechar
   verif(
     'le CO déplace librement entre deux fraternités ordinaires',
     peutDeplacerEntreFraternites('co', null, null)
+  );
+}
+
+// ============================================================================
+// Saisie des cotisations : Caissier + CO paroissial (migration 20261008120000).
+//
+// L'interface doit refléter EXACTEMENT la base : `peut_saisir_cotisations()`
+// renvoie vrai pour `caissier` et `co_paroissial` — et eux seuls. Le Caissier
+// conserve son droit ; `co` (diocésain), `admin` et `responsable` ne saisissent
+// pas (matrice du cahier des charges).
+// ============================================================================
+{
+  console.log('\n▶ Saisie des cotisations — droits par rôle');
+  verif('caissier saisit les cotisations', peutSaisirCotisations('caissier'));
+  verif(
+    'co_paroissial saisit les cotisations (même droit que le caissier)',
+    peutSaisirCotisations('co_paroissial')
+  );
+  for (const role of ['admin', 'co', 'responsable'] as Role[]) {
+    verif(`${role} ne saisit pas les cotisations`, !peutSaisirCotisations(role));
+  }
+  verif(
+    'un compte sans rôle ne saisit pas les cotisations',
+    !peutSaisirCotisations(null) && !peutSaisirCotisations(undefined)
+  );
+  verif(
+    'estCaissier reste strict (co_paroissial n’est pas caissier)',
+    !estCaissier('co_paroissial') && estCaissier('caissier')
   );
 }
 
