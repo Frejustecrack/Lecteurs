@@ -29,7 +29,8 @@ supabase/
 │   ├── 20261004090000_compteurs_hors_animateurs.sql
 │   ├── 20261004120000_corriger_designation_fraternite_animateur.sql
 │   ├── 20261004130000_annuler_designation_automatique_non_revue.sql
-│   └── 20261008120000_co_paroissial_saisie_cotisations.sql
+│   ├── 20261008120000_co_paroissial_saisie_cotisations.sql
+│   └── 20261009000000_annee_cathechetique.sql
 └── scripts/
     ├── seed-comptes.sql       ← attribution des rôles — à exécuter UNE fois (SQL Editor)
     └── clean_test_data.sql    ← remise à zéro — UNE fois, jamais en migration
@@ -78,6 +79,7 @@ Une migration **déjà appliquée ne se modifie jamais**. On ajoute un nouveau f
 | `20261004120000_corriger_designation_fraternite_animateur.sql` | Réparation de la désignation « fraternité Animateur » constatée en production (`reparer_designation_fraternite_animateur()`). |
 | `20261004130000_annuler_designation_automatique_non_revue.sql` | Annule la désignation automatique non révisée par un humain (erreur corrigée). |
 | `20261008120000_co_paroissial_saisie_cotisations.sql` | **Saisie des cotisations ouverte au CO paroissial** : fonction `peut_saisir_cotisations()` (`caissier` + `co_paroissial`) ; policies `cotisations_insert` / `cotisations_update` / `cotisations_delete` mises à jour. `is_caissier()` inchangée. Le Caissier ne perd aucun droit ; `co` (diocésain), `admin` et `responsable` ne saisissent toujours pas. Idempotente, vérifiée par `npm run verif:db`. |
+| `20261009000000_annee_cathechetique.sql` | **Année Catéchétique** : colonne `lecteurs.annee_cathechetique` (`1ère Année` → `5ème Année`, `NULL` = « Aucun »), contrainte CHECK sur la liste fermée, index, et recréation du trigger `check_lecteur_update` pour que sa modification reste réservée à Admin/CO. Idempotente, vérifiée par `npm run verif:db`. |
 
 ### Scripts manuels (`scripts/`)
 

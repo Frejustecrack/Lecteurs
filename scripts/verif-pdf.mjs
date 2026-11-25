@@ -54,6 +54,21 @@ const echecs = [];
 const ok = (n) => { reussites++; console.log(`  ✓ ${n}`); };
 const ko = (n, d) => { echecs.push(`${n}${d ? ` — ${d}` : ''}`); console.log(`  ✗ ${n}${d ? `\n      ${d}` : ''}`); };
 
+/**
+ * Texte réellement posé sur une page PDF : jsPDF encode les accents en octal
+ * dans les chaînes `(…) Tj`, d'où le décodage ci-dessous.
+ */
+const textePage = (doc, page) => {
+  const brut = doc.internal.pages[page].join('\n');
+  return (brut.match(/\((?:\\.|[^\\()])*\)/g) ?? [])
+    .map((s) => s.slice(1, -1))
+    .map((s) =>
+      s.replace(/\\([0-7]{3})/g, (_, o) => String.fromCharCode(parseInt(o, 8)))
+        .replace(/\\(.)/g, '$1')
+    )
+    .join(' ');
+};
+
 // Capture des documents.
 const produits = [];
 let tablesPresences = [];
@@ -79,6 +94,9 @@ const lecteurs = Array.from({ length: 200 }, (_, i) => ({
   date_naissance: '2012-05-01',
   grade_id: (i % 7) + 1,
   annee_adhesion: 2020 + (i % 6),
+  // Année catéchétique cyclique, avec « Aucun » (null) 1 lecteur sur 6.
+  annee_cathechetique:
+    i % 6 === 5 ? null : ['1ère Année', '2ème Année', '3ème Année', '4ème Année', '5ème Année'][i % 5],
   fraternite_id: i % 2 ? 'f1' : 'f2',
   adresse: 'Akogbato',
   contact_parent: '01 69 71 42 42',
@@ -223,7 +241,62 @@ console.log('\n5. Règle « premier samedi actif » dans les PDF (cellules « N�
   else ko('PDF cotisations : totaux LEC400', JSON.stringify(ligneCot?.slice(7)));
 }
 
-console.log('\n6. Noms de fichiers : préfixe « lecteur_akogbato », descriptifs, uniques');
+console.log('\n6. Année Catéchétique : liste et fiche lecteur');
+{
+  const fiche = produits.find((x) => x.nom.startsWith('lecteur_akogbato_fiche_lecteur'));
+  const texteFiche = textePage(fiche.doc, 1);
+  if (/Ann.e Cat.ch.tique .*1.re Ann.e/.test(texteFiche) || /Ann.e Cat.ch.tique/.test(texteFiche))
+    ok('fiche lecteur : la mention « Année Catéchétique » figure sur le document');
+  else ko('fiche lecteur : ligne Année Catéchétique absente', texteFiche.slice(0, 200));
+
+  // Lecteur 0 → « 1ère Année » (valeur non nulle) ; un lecteur « Aucun » → « Aucun ».
+  const avecAnnee = { ...lecteurs[0], annee_cathechetique: '5ème Année' };
+  const sansAnnee = { ...lecteurs[1], annee_cathechetique: null };
+  const args = (lecteur) => ({
+    lecteur, grades: [{ id: 1, nom: 'Postulat' }], history: [], presences: [], cotisations: [],
+    evenements: [], appreciations: [], auteur: 'Test', montantCot: 50,
+  });
+  suffixeNom = '_annee_cathe';
+  mod.exportFicheLecteur(args(avecAnnee));
+  const texteAvec = textePage(produits.at(-1).doc, 1);
+  mod.exportFicheLecteur(args(sansAnnee));
+  const texteSans = textePage(produits.at(-1).doc, 1);
+  suffixeNom = '';
+
+  if (/5.me Ann.e/.test(texteAvec))
+    ok('fiche lecteur : « 5ème Année » est bien imprimée pour un lecteur catéchisé');
+  else ko('fiche lecteur : année attendue absente', texteAvec.slice(0, 300));
+  if (/Aucun/.test(texteSans))
+    ok('fiche lecteur : « Aucun » est imprimé quand aucune année n’est renseignée');
+  else ko('fiche lecteur : « Aucun » absent', texteSans.slice(0, 300));
+
+  // Liste des lecteurs : colonne dédiée + libellé lisible.
+  suffixeNom = '_annee_cathe';
+  mod.exportListeLecteurs({
+    lecteurs: [avecAnnee, sansAnnee],
+    grades: [{ id: 1, nom: 'Postulat' }],
+    fraternites: [{ id: 'f1', nom: 'Saint Jean', responsables: [], created_at: '' }],
+    fraternite: null, grade: null, anneeCathechetique: '5ème Année', recherche: '',
+    statut: 'actifs', auteur: 'Test',
+  });
+  const t = produits.at(-1).doc.lastAutoTable;
+  const entetes = Object.values(t.head[0].cells).map((c) => String(c.text?.join?.(' ') ?? c.raw ?? ''));
+  const corps = t.body.map((r) => Object.values(r.cells).map((c) => String(c.text?.join?.(' ') ?? c.raw ?? '')));
+  suffixeNom = '';
+  if (entetes.includes('Année Catéchétique'))
+    ok('liste des lecteurs : colonne « Année Catéchétique » présente');
+  else ko('liste des lecteurs : colonne manquante', entetes.join(' | '));
+  const iCol = entetes.indexOf('Année Catéchétique');
+  if (corps.length === 2 && corps[0]?.[iCol] === '5ème Année' && corps[1]?.[iCol] === 'Aucun')
+    ok('liste des lecteurs : année lisible par ligne, « Aucun » pour un lecteur non catéchisé');
+  else ko('liste des lecteurs : valeurs de la colonne', JSON.stringify(corps.map((r) => r[iCol])));
+  const texteListe = textePage(produits.at(-1).doc, 1);
+  if (/Ann.e Cat.ch.tique : 5.me Ann.e/.test(texteListe))
+    ok('liste des lecteurs : le filtre Année Catéchétique est rappelé dans l’en-tête');
+  else ko('liste des lecteurs : filtre non rappelé', texteListe.slice(0, 300));
+}
+
+console.log('\n7. Noms de fichiers : préfixe « lecteur_akogbato », descriptifs, uniques');
 {
   // Les 2 documents de la section 5 sont des fixtures de test : on contrôle
   // l'unicité sur les 7 documents « réels » (mêmes noms → mêmes fichiers).
@@ -248,7 +321,7 @@ console.log('\n6. Noms de fichiers : préfixe « lecteur_akogbato », descriptif
   for (const n of [...noms, ...produits.filter((p) => p.suffixe).map((p) => p.nom)]) console.log(`      • ${n}`);
 }
 
-console.log('\n7. Ordre alphabétique imposé par les cinq exports de listes');
+console.log('\n8. Ordre alphabétique imposé par les cinq exports de listes');
 {
   suffixeNom = '_tri';
   // Matricules volontairement en ordre inverse des noms : tester le nom réel.

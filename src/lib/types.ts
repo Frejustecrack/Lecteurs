@@ -30,6 +30,12 @@ export interface Lecteur {
   date_naissance: string | null;
   grade_id: number;
   annee_adhesion: number | null;
+  /**
+   * Année de catéchèse en cours (`1ère Année` → `5ème Année`).
+   * `null` = « Aucun » (valeur par défaut à la création et pour les
+   * lecteurs existants avant l'ajout du champ).
+   */
+  annee_cathechetique: string | null;
   fraternite_id: string | null;
   adresse: string | null;
   contact_parent: string | null;
@@ -37,6 +43,44 @@ export interface Lecteur {
   archived_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Années de catéchèse proposées dans le menu déroulant de la fiche lecteur,
+ * en chiffres (ex. « 5ème Année »). Liste fermée : la base impose la même
+ * liste par contrainte CHECK (`lecteurs_annee_cathechetique_check`,
+ * migration 20261009000000). « Aucun » n'est pas une valeur stockée :
+ * il correspond à `null`.
+ */
+export const ANNEES_CATHECHETIQUES = [
+  '1ère Année',
+  '2ème Année',
+  '3ème Année',
+  '4ème Année',
+  '5ème Année',
+] as const;
+
+export type AnneeCathechetique = (typeof ANNEES_CATHECHETIQUES)[number];
+
+/** Libellé d'affichage d'une année catéchétique (`null` → « Aucun »). */
+export function libelleAnneeCathechetique(
+  valeur: string | null | undefined
+): string {
+  return valeur ?? 'Aucun';
+}
+
+/**
+ * Vrai si `valeur` correspond au filtre d'année catéchétique choisi dans
+ * l'écran Lecteurs. `''` = aucun filtre ; `'Aucun'` = lecteurs sans année
+ * (`null`) ; sinon égalité stricte avec l'année stockée.
+ */
+export function correspondAnneeCathechetique(
+  valeur: string | null | undefined,
+  filtre: string
+): boolean {
+  if (!filtre) return true;
+  if (filtre === 'Aucun') return valeur == null;
+  return valeur === filtre;
 }
 
 export interface LecteurGrade {

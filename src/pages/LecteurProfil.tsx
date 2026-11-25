@@ -16,7 +16,9 @@ import {
   samedisDuMois,
 } from '../lib/dates';
 import {
+  ANNEES_CATHECHETIQUES,
   estAdmin,
+  libelleAnneeCathechetique,
   peutGererLecteurs,
   type Appreciation,
   type Cotisation,
@@ -128,6 +130,7 @@ export default function LecteurProfil() {
     prenom: '',
     date_naissance: '',
     annee_adhesion: '',
+    annee_cathechetique: '',
     fraternite_id: '',
     adresse: '',
     contact_parent: '',
@@ -378,6 +381,7 @@ export default function LecteurProfil() {
       prenom: l.prenom,
       date_naissance: l.date_naissance ?? '',
       annee_adhesion: l.annee_adhesion ? String(l.annee_adhesion) : '',
+      annee_cathechetique: l.annee_cathechetique ?? '',
       fraternite_id: l.fraternite_id ?? '',
       adresse: l.adresse ?? '',
       contact_parent: l.contact_parent ?? '',
@@ -404,6 +408,7 @@ export default function LecteurProfil() {
         prenom: form.prenom.trim(),
         date_naissance: form.date_naissance || null,
         annee_adhesion: form.annee_adhesion ? Number(form.annee_adhesion) : null,
+        annee_cathechetique: form.annee_cathechetique || null,
         fraternite_id: form.fraternite_id || null,
         adresse: form.adresse.trim() || null,
         contact_parent: form.contact_parent.trim() || null,
@@ -567,6 +572,12 @@ export default function LecteurProfil() {
               <div className="flex justify-between">
                 <dt className="text-slate-500">Année d'adhésion</dt>
                 <dd className="font-medium">{l.annee_adhesion ?? '—'}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-slate-500">Année Catéchétique</dt>
+                <dd className="font-medium">
+                  {libelleAnneeCathechetique(l.annee_cathechetique)}
+                </dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-slate-500">Fraternité</dt>
@@ -985,6 +996,20 @@ export default function LecteurProfil() {
                 max={bornesAnneeAdhesion().max}
                 onChange={(e) => setForm({ ...form, annee_adhesion: e.target.value })}
               />
+            </Field>
+            <Field label="Année Catéchétique">
+              <select
+                className={inputCls}
+                value={form.annee_cathechetique}
+                onChange={(e) => setForm({ ...form, annee_cathechetique: e.target.value })}
+              >
+                <option value="">Aucun</option>
+                {ANNEES_CATHECHETIQUES.map((a) => (
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
+                ))}
+              </select>
             </Field>
             <Field label="Fraternité">
               <select

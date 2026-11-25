@@ -41,11 +41,14 @@ import {
   trierRecaps,
 } from '../src/lib/recap.ts';
 import {
+  ANNEES_CATHECHETIQUES,
   ROLE_LABELS,
   ROLE_LABELS_ADMIN,
+  correspondAnneeCathechetique,
   estCaissier,
   estCO,
   estCOParoissial,
+  libelleAnneeCathechetique,
   peutDeplacerEntreFraternites,
   peutGererMembresFraternite,
   peutSaisirCotisations,
@@ -1037,6 +1040,44 @@ console.log('\n── Temps réel : regroupement et non-superposition des rechar
   verif(
     'le tarif Animateur par défaut est bien 100 F par samedi',
     montantParametre(undefined, 100) === 100
+  );
+}
+
+// ============================================================================
+// Année Catéchétique : liste fermée en chiffres, « Aucun » = null.
+// ============================================================================
+{
+  console.log('\n▶ Année Catéchétique');
+  verif(
+    '5 années en chiffres, de 1ère à 5ème Année',
+    ANNEES_CATHECHETIQUES.length === 5 &&
+      ANNEES_CATHECHETIQUES[0] === '1ère Année' &&
+      ANNEES_CATHECHETIQUES[4] === '5ème Année'
+  );
+  verif('null s’affiche « Aucun »', libelleAnneeCathechetique(null) === 'Aucun');
+  verif(
+    'undefined s’affiche « Aucun »',
+    libelleAnneeCathechetique(undefined) === 'Aucun'
+  );
+  verif(
+    'une année stockée s’affiche telle quelle',
+    libelleAnneeCathechetique('5ème Année') === '5ème Année'
+  );
+  verif(
+    'sans filtre, tout le monde correspond',
+    correspondAnneeCathechetique(null, '') && correspondAnneeCathechetique('2ème Année', '')
+  );
+  verif(
+    'filtre « Aucun » ne retient que les null',
+    correspondAnneeCathechetique(null, 'Aucun') &&
+      correspondAnneeCathechetique(undefined, 'Aucun') &&
+      !correspondAnneeCathechetique('1ère Année', 'Aucun')
+  );
+  verif(
+    'filtre par année : égalité stricte',
+    correspondAnneeCathechetique('5ème Année', '5ème Année') &&
+      !correspondAnneeCathechetique('4ème Année', '5ème Année') &&
+      !correspondAnneeCathechetique(null, '5ème Année')
   );
 }
 
