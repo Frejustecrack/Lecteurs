@@ -352,7 +352,49 @@ console.log('\n8. Métadonnées : document officiel de la CDLJ');
   else ko('créateur générique', champ('Creator'));
 }
 
-console.log('\n9. Ordre alphabétique imposé par les cinq exports de listes');
+console.log('\n9. Mention d’export : date seule en pied de page, aucun nom');
+{
+  // L'auteur passé aux exports est « Test » : il ne doit apparaître nulle part.
+  for (const p of produits.filter((x) => !x.suffixe)) {
+    const texte = textePage(p.doc, 1);
+    if (!/Export. par/.test(texte))
+      ok(`${p.nom.slice(0, 42)}… : aucune mention « Exporté par »`);
+    else ko(`${p.nom} : mention « Exporté par » encore présente`);
+  }
+  const p = produits[0];
+  const texte = textePage(p.doc, 1);
+  if (/Export. le \d{2}\/\d{2}\/\d{4}/.test(texte))
+    ok('la date d’export figure au format jj/mm/aaaa');
+  else ko('date d’export absente', texte.slice(0, 200));
+  if (!/\bTest\b/.test(texte))
+    ok('le nom de la personne qui exporte n’apparaît pas');
+  else ko('le nom de l’exportateur figure encore sur le document');
+
+  // Position réelle : jsPDF émet un bloc « BT … Td (texte) Tj ET », avec le
+  // décalage en POINTS depuis le bas de la page (1 mm = 72/25,4 pt).
+  const mmParPoint = 25.4 / 72;
+  const positionDepuisLeBas = (page, motif) => {
+    for (const brut of page) {
+      const bloc = String(brut);
+      if (bloc.includes('BT') && motif.test(bloc)) {
+        const td = /([\d.-]+) ([\d.-]+) Td/.exec(bloc);
+        if (td) return Number(td[2]) * mmParPoint;
+      }
+    }
+    return null;
+  };
+  const yExport = positionDepuisLeBas(p.doc.internal.pages[1], /Export. le/);
+  if (yExport !== null && yExport < p.h * 0.15)
+    ok(`la mention « Exporté le … » est en pied de page (à ${yExport.toFixed(0)} mm du bas)`);
+  else ko('mention d’export mal positionnée', `${yExport} mm du bas (attendu < ${(p.h * 0.15).toFixed(0)})`);
+
+  const yPage = positionDepuisLeBas(p.doc.internal.pages[1], /Page 1\//);
+  if (yExport !== null && yPage !== null && yExport > yPage)
+    ok('la date d’export est placée au-dessus de la ligne de page (bon ordre de lecture)');
+  else ko('ordre des lignes de pied de page', `export ${yExport} / page ${yPage}`);
+}
+
+console.log('\n10. Ordre alphabétique imposé par les cinq exports de listes');
 {
   suffixeNom = '_tri';
   // Matricules volontairement en ordre inverse des noms : tester le nom réel.
