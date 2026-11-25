@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useDebounce } from '../lib/useDebounce';
 import { fmtDateHeure } from '../lib/dates';
 import { traduireErreur } from '../lib/errors';
+import { correspondRecherche } from '../lib/lecteurs';
 import type { LogEntry, Profile, Role } from '../lib/types';
 import { ROLE_LABELS_ADMIN } from '../lib/types';
 import {
@@ -121,11 +122,8 @@ export default function Admin() {
   if (loading) return <Spinner label="Chargement de l'administration…" />;
 
   const logsFiltres = debouncedQLog
-    ? logs.filter(
-        (l) =>
-          l.action.toLowerCase().includes(debouncedQLog.toLowerCase()) ||
-          (l.objet_ref ?? '').toLowerCase().includes(debouncedQLog.toLowerCase()) ||
-          (l.user_name ?? '').toLowerCase().includes(debouncedQLog.toLowerCase())
+    ? logs.filter((l) =>
+        correspondRecherche([l.action, l.objet_ref, l.user_name], debouncedQLog)
       )
     : logs;
 

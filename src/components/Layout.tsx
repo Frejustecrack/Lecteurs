@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -56,6 +56,19 @@ export default function Layout() {
   /** Œil : révélation indépendante des deux champs du formulaire. */
   const [showPw1, setShowPw1] = useState(false);
   const [showPw2, setShowPw2] = useState(false);
+
+  /**
+   * Fermeture du menu mobile par la touche Échap — comportement attendu de
+   * tout panneau modal, et indispensable au clavier faute d'overlay évident.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
 
   /** Ferme la modale et re-masque les mots de passe (jamais laissés visibles). */
   function closePwModal() {
@@ -177,6 +190,8 @@ export default function Layout() {
             onClick={() => setOpen(true)}
             className={`rounded-lg p-2 text-slate-600 hover:bg-slate-100 ${pressCls}`}
             aria-label="Ouvrir le menu"
+            aria-expanded={open}
+            aria-controls="menu-mobile"
           >
             <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
@@ -198,7 +213,13 @@ export default function Layout() {
         {open && (
           <div className="fixed inset-0 z-40 lg:hidden">
             <div className="cdlj-backdrop absolute inset-0 bg-slate-900/30" onClick={() => setOpen(false)} aria-hidden />
-            <div className="cdlj-drawer absolute left-0 top-0 flex h-full w-72 flex-col bg-white p-4 shadow-2xl ring-1 ring-slate-200">
+            <div
+              className="cdlj-drawer absolute left-0 top-0 flex h-full w-72 flex-col bg-white p-4 shadow-2xl ring-1 ring-slate-200"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Menu de navigation"
+              id="menu-mobile"
+            >
               <Logo />
               <nav className="mt-6 flex flex-1 flex-col gap-1 overflow-y-auto">{navContent}</nav>
               {userFooter}

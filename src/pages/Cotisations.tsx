@@ -1,4 +1,4 @@
-import { trierLecteurs } from '../lib/lecteurs';
+import { correspondRecherche as correspondRechercheLecteur, trierLecteurs } from '../lib/lecteurs';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -181,15 +181,8 @@ export default function Cotisations() {
   );
 
   const correspondRecherche = useCallback(
-    (l: Lecteur) => {
-      const q = debouncedSearch.trim().toLowerCase();
-      if (!q) return true;
-      return (
-        l.matricule.toLowerCase().includes(q) ||
-        l.nom.toLowerCase().includes(q) ||
-        l.prenom.toLowerCase().includes(q)
-      );
-    },
+    (l: Lecteur) =>
+      correspondRechercheLecteur([l.nom, l.prenom, l.matricule], debouncedSearch),
     [debouncedSearch]
   );
 

@@ -52,11 +52,18 @@ const LIGNES_OFFICIELLES = [
  * - Aux terminaux (téléphone portable / iOS / Android / ordinateur)
  *   en embarquant les logos en base64 (aucun appel réseau nécessaire).
  */
+/**
+ * En-tête officiel. `utilisateur` est encore accepté par les appelants mais
+ * n'est plus imprimé : la mention « Exporté par … » a été retirée de l'en-tête
+ * à la demande de la CDLJ (le nom de la personne n'a pas à figurer sur un
+ * document diffusé). Seule la date d'export est conservée, en pied de page.
+ */
 function entete(
   doc: jsPDF,
   titre: string,
   sousTitre: string,
-  utilisateur: string
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  utilisateur?: string
 ): number {
   const pageWidth = doc.internal.pageSize.getWidth();
   const isLandscape = pageWidth > 250;
@@ -115,29 +122,23 @@ function entete(
   doc.setLineWidth(0.4);
   doc.line(cx - titleWidth / 2, cursorY + 1.2, cx + titleWidth / 2, cursorY + 1.2);
 
-  // 5. Métadonnées (période, filtres, exportateur, date)
+  // 5. Métadonnées : uniquement la période et les filtres appliqués.
+  //    La mention d'export (« Exporté le … ») vit désormais en pied de page,
+  //    sans le nom de la personne qui exporte.
   cursorY += 5;
-  const metaParts: string[] = [];
-  if (sousTitre) metaParts.push(sousTitre);
-  if (utilisateur) metaParts.push(`Exporté par ${utilisateur}`);
-  metaParts.push(`Le ${fmtDate(new Date())}`);
-  const metaText = metaParts.join('   •   ');
-
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
   doc.setTextColor(71, 85, 105); // slate-600
 
-  // Si le texte est trop large pour la zone imprimable, répartir sur deux lignes
-  const maxW = pageWidth - 24;
-  if (doc.getTextWidth(metaText) > maxW) {
-    if (sousTitre) {
+  if (sousTitre) {
+    const maxW = pageWidth - 24;
+    // Si le sous-titre est trop large pour la zone imprimable, le répartir.
+    if (doc.getTextWidth(sousTitre) > maxW) {
+      doc.text(sousTitre, cx, cursorY, { align: 'center', maxWidth: maxW });
+      cursorY += 3.5 * Math.ceil(doc.getTextWidth(sousTitre) / maxW);
+    } else {
       doc.text(sousTitre, cx, cursorY, { align: 'center' });
-      cursorY += 3.5;
     }
-    const infoExport = `Exporté le ${fmtDate(new Date())}${utilisateur ? ` par ${utilisateur}` : ''}`;
-    doc.text(infoExport, cx, cursorY, { align: 'center' });
-  } else {
-    doc.text(metaText, cx, cursorY, { align: 'center' });
   }
 
   // Retourne la position Y où le tableau ou corps du document commence
@@ -152,11 +153,21 @@ function piedPage(doc: jsPDF) {
   const n = doc.getNumberOfPages();
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
+  // Date de génération figée une seule fois pour tout le document : deux
+  // appels successifs à `new Date()` pourraient différer d'une seconde et
+  // afficher deux dates incohérentes entre les pages.
+  const dateExport = fmtDate(new Date());
   for (let i = 1; i <= n; i++) {
     doc.setPage(i);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7.5);
     doc.setTextColor(148, 163, 184); // slate-400
+    doc.text(
+      `Exporté le ${dateExport}`,
+      pageWidth / 2,
+      pageHeight - 9,
+      { align: 'center' }
+    );
     doc.text(
       `Lecteurs Juniors à Akogbato — Paroisse Sainte Famille — Document officiel — Page ${i}/${n}`,
       pageWidth / 2,
@@ -214,8 +225,25 @@ function sauvegarderPdf(doc: jsPDF, nomFichier: string) {
  * Les tableaux larges (fiches mensuelles, liste des lecteurs) sont
  * dimensionnés colonne par colonne pour tenir dans 182 mm utiles.
  */
+/**
+ * Document A4 portrait avec des métadonnées en français.
+ *
+ * jsPDF renseigne par défaut « Creator: jsPDF » et « Producer: jsPDF » : sur un
+ * document officiel de la CDLJ, cela affichait le nom d'une bibliothèque
+ * technique dans les propriétés du fichier (et dans l'aperçu avant impression
+ * de certains lecteurs PDF). Les métadonnées sont donc posées à la création,
+ * une seule fois, pour les sept exports.
+ */
 function nouveauDocument(): jsPDF {
-  return new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  doc.setProperties({
+    title: 'Document officiel — CDLJ Paroisse Sainte Famille d’Akogbato',
+    subject: 'Œuvre Pontificale de l’Enfance Missionnaire — Communauté Diocésaine des Lecteurs Juniors',
+    author: 'Communauté Diocésaine des Lecteurs Juniors — Paroisse Sainte Famille d’Akogbato',
+    creator: 'CDLJ Akogbato — application de gestion des lecteurs',
+    keywords: 'CDLJ, lecteurs juniors, Akogbato, Cotonou, Sainte Famille',
+  });
+  return doc;
 }
 
 /**

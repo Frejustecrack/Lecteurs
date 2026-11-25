@@ -1,4 +1,4 @@
-import { trierLecteurs } from '../lib/lecteurs';
+import { correspondRecherche, trierLecteurs } from '../lib/lecteurs';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -107,7 +107,12 @@ export default function Lecteurs() {
     setFraternites((rF.data ?? []) as Fraternite[]);
     setGrades((rG.data ?? []) as Grade[]);
     setLoading(false);
-  }, []);
+    // Sans ce message, une erreur de chargement (réseau, droits, colonne
+    // absente) donnait une liste vide : l'utilisateur croyait qu'il n'y avait
+    // plus aucun lecteur. On distingue la panne d'une liste réellement vide.
+    const erreur = rL.error || rF.error || rG.error;
+    if (erreur) toast(traduireErreur(erreur, 'charger la liste des lecteurs'), 'err');
+  }, [toast]);
 
   useEffect(() => {
     load();
@@ -127,11 +132,7 @@ export default function Lecteurs() {
       if (gradeId && l.grade_id !== Number(gradeId)) return false;
       if (!correspondAnneeCathechetique(l.annee_cathechetique, anneeCatheId)) return false;
       if (!q) return true;
-      return (
-        l.matricule.toLowerCase().includes(q) ||
-        l.nom.toLowerCase().includes(q) ||
-        l.prenom.toLowerCase().includes(q)
-      );
+      return correspondRecherche([l.nom, l.prenom, l.matricule], debouncedSearch);
     });
   }, [lecteurs, tab, fId, gradeId, anneeCatheId, debouncedSearch]);
 

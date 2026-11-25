@@ -321,7 +321,80 @@ console.log('\n7. Noms de fichiers : préfixe « lecteur_akogbato », descriptif
   for (const n of [...noms, ...produits.filter((p) => p.suffixe).map((p) => p.nom)]) console.log(`      • ${n}`);
 }
 
-console.log('\n8. Ordre alphabétique imposé par les cinq exports de listes');
+console.log('\n8. Métadonnées : document officiel de la CDLJ');
+{
+  const p = produits.find((x) => x.nom.startsWith('lecteur_akogbato_fiche_lecteur'));
+  // jsPDF écrit « /Producer (jsPDF x.y.z) » en dur et ignore toute surcharge :
+  // on vérifie donc les champs que NOUS maîtrisons (title, author, subject).
+  const info = Buffer.from(p.doc.output(), 'latin1');
+  const champ = (nom) => {
+    const m = new RegExp(`/${nom} \\(`).exec(info.toString('latin1'));
+    if (!m) return '';
+    // jsPDF écrit les chaînes accentuées en UTF-16BE précédé du BOM « þÿ ».
+    const debut = m.index + m[0].length;
+    const fin = info.indexOf(')', debut, 'latin1');
+    const brut = info.subarray(debut, fin);
+    const texte = brut[0] === 0xfe && brut[1] === 0xff
+      ? brut.subarray(2).swap16().toString('utf16le')
+      : brut.toString('latin1').replace(/\\(.)/g, '$1');
+    return texte;
+  };
+  const titre = champ('Title');
+  const auteur = champ('Author');
+  if (/CDLJ/.test(titre))
+    ok('titre du document en français, au nom de la CDLJ');
+  else ko('titre du PDF absent ou générique', titre);
+  if (/Lecteurs Juniors/.test(auteur) && /Akogbato/.test(auteur))
+    ok('auteur en français avec la paroisse');
+  else ko('auteur du PDF absent', auteur);
+  if (/CDLJ/.test(champ('Creator')))
+    ok('créateur renseigné (plus de valeur technique par défaut)');
+  else ko('créateur générique', champ('Creator'));
+}
+
+console.log('\n9. Mention d’export : date seule en pied de page, aucun nom');
+{
+  // L'auteur passé aux exports est « Test » : il ne doit apparaître nulle part.
+  for (const p of produits.filter((x) => !x.suffixe)) {
+    const texte = textePage(p.doc, 1);
+    if (!/Export. par/.test(texte))
+      ok(`${p.nom.slice(0, 42)}… : aucune mention « Exporté par »`);
+    else ko(`${p.nom} : mention « Exporté par » encore présente`);
+  }
+  const p = produits[0];
+  const texte = textePage(p.doc, 1);
+  if (/Export. le \d{2}\/\d{2}\/\d{4}/.test(texte))
+    ok('la date d’export figure au format jj/mm/aaaa');
+  else ko('date d’export absente', texte.slice(0, 200));
+  if (!/\bTest\b/.test(texte))
+    ok('le nom de la personne qui exporte n’apparaît pas');
+  else ko('le nom de l’exportateur figure encore sur le document');
+
+  // Position réelle : jsPDF émet un bloc « BT … Td (texte) Tj ET », avec le
+  // décalage en POINTS depuis le bas de la page (1 mm = 72/25,4 pt).
+  const mmParPoint = 25.4 / 72;
+  const positionDepuisLeBas = (page, motif) => {
+    for (const brut of page) {
+      const bloc = String(brut);
+      if (bloc.includes('BT') && motif.test(bloc)) {
+        const td = /([\d.-]+) ([\d.-]+) Td/.exec(bloc);
+        if (td) return Number(td[2]) * mmParPoint;
+      }
+    }
+    return null;
+  };
+  const yExport = positionDepuisLeBas(p.doc.internal.pages[1], /Export. le/);
+  if (yExport !== null && yExport < p.h * 0.15)
+    ok(`la mention « Exporté le … » est en pied de page (à ${yExport.toFixed(0)} mm du bas)`);
+  else ko('mention d’export mal positionnée', `${yExport} mm du bas (attendu < ${(p.h * 0.15).toFixed(0)})`);
+
+  const yPage = positionDepuisLeBas(p.doc.internal.pages[1], /Page 1\//);
+  if (yExport !== null && yPage !== null && yExport > yPage)
+    ok('la date d’export est placée au-dessus de la ligne de page (bon ordre de lecture)');
+  else ko('ordre des lignes de pied de page', `export ${yExport} / page ${yPage}`);
+}
+
+console.log('\n10. Ordre alphabétique imposé par les cinq exports de listes');
 {
   suffixeNom = '_tri';
   // Matricules volontairement en ordre inverse des noms : tester le nom réel.

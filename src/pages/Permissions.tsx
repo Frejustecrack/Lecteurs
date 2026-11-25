@@ -1,4 +1,4 @@
-import { comparerLecteurs, trierLecteurs } from '../lib/lecteurs';
+import { comparerLecteurs, correspondRecherche, trierLecteurs } from '../lib/lecteurs';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -105,7 +105,10 @@ export default function Permissions() {
     setFraternites((rF.data ?? []) as Fraternite[]);
     setGrades((rG.data ?? []) as Grade[]);
     setLoading(false);
-  }, []);
+    // Erreur de chargement = écran vide silencieux : on le dit.
+    const erreur = rP.error || rL.error || rF.error || rG.error;
+    if (erreur) toast(traduireErreur(erreur, 'charger les permissions'), 'err');
+  }, [toast]);
 
   useEffect(() => {
     load();
@@ -129,7 +132,6 @@ export default function Permissions() {
 
   // ---------------------------------------------------- filtrage + recherche
   const liste = useMemo(() => {
-    const q = debouncedSearch.trim().toLowerCase();
     return permissions
       .map((p) => ({ ...p, statut: statutPermission(p) }))
       .filter((p) => {
@@ -142,14 +144,8 @@ export default function Permissions() {
         if (fId && l.fraternite_id !== fId) return false;
         // Grade
         if (gradeId && l.grade_id !== Number(gradeId)) return false;
-        // Recherche
-        if (q) {
-          return (
-            l.matricule.toLowerCase().includes(q) ||
-            l.nom.toLowerCase().includes(q) ||
-            l.prenom.toLowerCase().includes(q)
-          );
-        }
+        // Recherche (sans accents ni casse, comme partout ailleurs)
+        if (!correspondRecherche([l.nom, l.prenom, l.matricule], debouncedSearch)) return false;
         return true;
       })
       .sort((a, b) => comparerLecteurs(lecteurMap.get(a.lecteur_id)!, lecteurMap.get(b.lecteur_id)!));
@@ -402,14 +398,10 @@ function FormulairePermission({
 
   // ---- lecteurs filtrés par recherche
   const lecteursFiltres = useMemo(() => {
-    const q = rechercheLecteur.trim().toLowerCase();
-    if (!q) return lecteurs.slice(0, 50);
-    return lecteurs.filter(
-      (l) =>
-        l.matricule.toLowerCase().includes(q) ||
-        l.nom.toLowerCase().includes(q) ||
-        l.prenom.toLowerCase().includes(q)
-    ).slice(0, 50);
+    if (!rechercheLecteur.trim()) return lecteurs.slice(0, 50);
+    return lecteurs
+      .filter((l) => correspondRecherche([l.nom, l.prenom, l.matricule], rechercheLecteur))
+      .slice(0, 50);
   }, [lecteurs, rechercheLecteur]);
 
   const lecteurSelectionne = lecteurs.find((l) => l.id === lecteurId) ?? null;

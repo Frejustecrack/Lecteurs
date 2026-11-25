@@ -1,4 +1,10 @@
-import { comparerLecteurs, rechercherLecteurs, trierLecteurs } from '../src/lib/lecteurs.ts';
+import {
+  comparerLecteurs,
+  correspondRecherche,
+  normaliserTexte,
+  rechercherLecteurs,
+  trierLecteurs,
+} from '../src/lib/lecteurs.ts';
 /**
  * Vérification de la logique métier pure (aucune dépendance, aucun serveur).
  *
@@ -102,6 +108,39 @@ function verif(nom: string, condition: boolean, detail = '') {
   verif('homonymes distingués par matricule', rechercherLecteurs(noms, 'alice').map(l => l.matricule).join(',') === 'LEC103,LEC201');
   verif('recherche vide : tous les lecteurs par nom', rechercherLecteurs(noms, '  ')[0]?.matricule === 'LEC103');
   verif('recherche sans résultat', rechercherLecteurs(noms, 'inexistant').length === 0);
+}
+
+// ============================================================================
+// Recherche unifiée : même règle dans TOUS les écrans (nom, prénom, matricule).
+// Avant, chaque page comparait `toLowerCase().includes()` : « Éhouman » ne se
+// retrouvait pas en tapant « ehouman », alors que la recherche des listes de
+// lecteurs le faisait déjà. Un seul comportement désormais.
+// ============================================================================
+{
+  console.log('\n▶ Recherche unifiée (accents, casse, mots multiples)');
+  verif('normaliserTexte retire accents et casse',
+    normaliserTexte('  ÉHOUMAN  Zoé ') === 'ehouman zoe');
+  verif('normaliserTexte garde les chiffres du matricule',
+    normaliserTexte('LEC101') === 'lec101');
+  verif('sans accent on trouve le nom accentué',
+    correspondRecherche(['Éhouman', 'Zoé', 'LEC101'], 'ehouman'));
+  verif('avec accent on trouve aussi',
+    correspondRecherche(['Éhouman', 'Zoé', 'LEC101'], 'ÉHOU'));
+  verif('mots multiples dans n’importe quel ordre',
+    correspondRecherche(['Éhouman', 'Zoé', 'LEC101'], 'zoe ehouman'));
+  verif('le matricule reste cherchable',
+    correspondRecherche(['Éhouman', 'Zoé', 'LEC101'], 'lec10'));
+  verif('recherche vide : tout correspond',
+    correspondRecherche(['Dossou', 'Marc', 'LEC202'], '   '));
+  verif('aucun champ renseigné : seule la recherche vide correspond',
+    !correspondRecherche([null, undefined, ''], 'dossou'));
+  verif('un mot absent disqualifie la ligne',
+    !correspondRecherche(['Dossou', 'Marc', 'LEC202'], 'dossou alice'));
+  verif('la recherche de liste suit la même règle',
+    rechercherLecteurs(
+      [{ nom: 'Éhouman', prenom: 'Zoé', matricule: 'LEC101' }],
+      'EHOU'
+    ).length === 1);
 }
 
 

@@ -62,7 +62,9 @@ export default function Evenements() {
     });
     setNbParticipants(counts);
     setLoading(false);
-  }, []);
+    const erreur = rE.error || rP.error;
+    if (erreur) toast(traduireErreur(erreur, 'charger les événements'), 'err');
+  }, [toast]);
 
   useEffect(() => {
     load();
