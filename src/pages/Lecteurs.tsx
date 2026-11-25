@@ -16,7 +16,10 @@ import {
   validerAnneesLecteur,
 } from '../lib/validation';
 import {
+  ANNEES_CATHECHETIQUES,
+  correspondAnneeCathechetique,
   estAdmin,
+  libelleAnneeCathechetique,
   peutGererLecteurs,
   type Fraternite,
   type Grade,
@@ -43,6 +46,8 @@ interface FormLecteur {
   date_naissance: string;
   grade_id: number;
   annee_adhesion: string;
+  /** '' = « Aucun » (stocké `null` en base). */
+  annee_cathechetique: string;
   fraternite_id: string;
   adresse: string;
   contact_parent: string;
@@ -54,6 +59,7 @@ const FORM_VIDE: FormLecteur = {
   date_naissance: '',
   grade_id: 1,
   annee_adhesion: String(new Date().getFullYear()),
+  annee_cathechetique: '',
   fraternite_id: '',
   adresse: '',
   contact_parent: '',
@@ -74,6 +80,8 @@ export default function Lecteurs() {
   const debouncedSearch = useDebounce(search, 300);
   const [fId, setFId] = useState('');
   const [gradeId, setGradeId] = useState('');
+  /** Filtre Année Catéchétique — uniquement dans cet onglet Lecteurs. */
+  const [anneeCatheId, setAnneeCatheId] = useState('');
   const [tab, setTab] = useState<'actifs' | 'archives'>('actifs');
   const [formOpen, setFormOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -88,7 +96,7 @@ export default function Lecteurs() {
       toutesLesLignes<Lecteur>((de, a) =>
         supabase
           .from('lecteurs')
-          .select('id, matricule, nom, prenom, grade_id, fraternite_id, annee_adhesion, archived, archived_at, contact_parent')
+          .select('id, matricule, nom, prenom, grade_id, fraternite_id, annee_adhesion, annee_cathechetique, archived, archived_at, contact_parent')
           .order('nom').order('prenom').order('matricule')
           .range(de, a)
       ),
@@ -117,6 +125,7 @@ export default function Lecteurs() {
       if (tab === 'actifs' ? l.archived : !l.archived) return false;
       if (fId && l.fraternite_id !== fId) return false;
       if (gradeId && l.grade_id !== Number(gradeId)) return false;
+      if (!correspondAnneeCathechetique(l.annee_cathechetique, anneeCatheId)) return false;
       if (!q) return true;
       return (
         l.matricule.toLowerCase().includes(q) ||
@@ -124,13 +133,15 @@ export default function Lecteurs() {
         l.prenom.toLowerCase().includes(q)
       );
     });
-  }, [lecteurs, tab, fId, gradeId, debouncedSearch]);
+  }, [lecteurs, tab, fId, gradeId, anneeCatheId, debouncedSearch]);
 
-  const filtresActifs = fId !== '' || gradeId !== '' || search.trim() !== '';
+  const filtresActifs =
+    fId !== '' || gradeId !== '' || anneeCatheId !== '' || search.trim() !== '';
 
   function reinitialiserFiltres() {
     setFId('');
     setGradeId('');
+    setAnneeCatheId('');
     setSearch('');
   }
 
@@ -148,6 +159,7 @@ export default function Lecteurs() {
       date_naissance: l.date_naissance ?? '',
       grade_id: l.grade_id,
       annee_adhesion: l.annee_adhesion ? String(l.annee_adhesion) : '',
+      annee_cathechetique: l.annee_cathechetique ?? '',
       fraternite_id: l.fraternite_id ?? '',
       adresse: l.adresse ?? '',
       contact_parent: l.contact_parent ?? '',
@@ -172,6 +184,7 @@ export default function Lecteurs() {
       date_naissance: form.date_naissance || null,
       grade_id: Number(form.grade_id),
       annee_adhesion: form.annee_adhesion ? Number(form.annee_adhesion) : null,
+      annee_cathechetique: form.annee_cathechetique || null,
       fraternite_id: form.fraternite_id || null,
       adresse: form.adresse.trim() || null,
       contact_parent: form.contact_parent.trim() || null,
@@ -236,6 +249,7 @@ export default function Lecteurs() {
         fraternites,
         fraternite: fraternites.find((f) => f.id === fId)?.nom ?? null,
         grade: grades.find((g) => g.id === Number(gradeId))?.nom ?? null,
+        anneeCathechetique: anneeCatheId || null,
         recherche: search.trim(),
         statut: tab,
         auteur: profile?.full_name ?? profile?.username ?? '—',
@@ -245,6 +259,7 @@ export default function Lecteurs() {
         statut: tab,
         fraternite: fId || 'toutes',
         grade: gradeId || 'tous',
+        annee_cathechetique: anneeCatheId || 'toutes',
         recherche: search.trim() || null,
         nombre: filtered.length,
       });
@@ -343,6 +358,20 @@ export default function Lecteurs() {
             </option>
           ))}
         </select>
+        <select
+          value={anneeCatheId}
+          onChange={(e) => setAnneeCatheId(e.target.value)}
+          aria-label="Filtrer par année catéchétique"
+          className={`${inputCls} w-full text-base sm:w-auto sm:text-sm`}
+        >
+          <option value="">Toutes les années catéchétiques</option>
+          <option value="Aucun">Aucun</option>
+          {ANNEES_CATHECHETIQUES.map((a) => (
+            <option key={a} value={a}>
+              {a}
+            </option>
+          ))}
+        </select>
         <input
           type="search"
           value={search}
@@ -404,6 +433,9 @@ export default function Lecteurs() {
                   <span className="whitespace-nowrap">
                     Adhésion : {l.annee_adhesion ?? '—'}
                   </span>
+                  <span className="whitespace-nowrap">
+                    Catéchèse : {libelleAnneeCathechetique(l.annee_cathechetique)}
+                  </span>
                 </div>
                 {tab === 'actifs' && canEdit && (
                   <div
@@ -429,7 +461,7 @@ export default function Lecteurs() {
             ))}
           </ul>
           <div className="hidden overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm sm:block">
-            <table className="w-full min-w-[640px] text-left text-sm">
+            <table className="w-full min-w-[760px] text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-3">Matricule</th>
@@ -437,6 +469,7 @@ export default function Lecteurs() {
                 <th className="px-4 py-3">Grade</th>
                 <th className="px-4 py-3">Fraternité</th>
                 <th className="px-4 py-3">Adhésion</th>
+                <th className="px-4 py-3">Année Catéchétique</th>
                 {tab === 'actifs' && canEdit && <th className="px-4 py-3 text-right">Actions</th>}
               </tr>
             </thead>
@@ -460,6 +493,9 @@ export default function Lecteurs() {
                     {fraterniteNom(l.fraternite_id)}
                   </td>
                   <td className="px-4 py-3 text-slate-500">{l.annee_adhesion ?? '—'}</td>
+                  <td className="px-4 py-3 text-slate-600">
+                    {libelleAnneeCathechetique(l.annee_cathechetique)}
+                  </td>
                   {tab === 'actifs' && canEdit && (
                     <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                       <button
@@ -553,6 +589,20 @@ export default function Lecteurs() {
                 {grades.map((g) => (
                   <option key={g.id} value={g.id}>
                     {g.nom}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Année Catéchétique">
+              <select
+                className={inputCls}
+                value={form.annee_cathechetique}
+                onChange={(e) => setForm({ ...form, annee_cathechetique: e.target.value })}
+              >
+                <option value="">Aucun</option>
+                {ANNEES_CATHECHETIQUES.map((a) => (
+                  <option key={a} value={a}>
+                    {a}
                   </option>
                 ))}
               </select>

@@ -11,16 +11,17 @@ import {
   samedisArrives,
   samedisDuMois,
 } from '../lib/dates';
-import type {
-  Appreciation,
-  Cotisation,
-  Evenement,
-  EvenementPaiement,
-  Fraternite,
-  Grade,
-  Lecteur,
-  LecteurGrade,
-  Presence,
+import {
+  libelleAnneeCathechetique,
+  type Appreciation,
+  type Cotisation,
+  type Evenement,
+  type EvenementPaiement,
+  type Fraternite,
+  type Grade,
+  type Lecteur,
+  type LecteurGrade,
+  type Presence,
 } from '../lib/types';
 import { absencesEffectives, indicateursRecap, type Recap } from '../lib/recap';
 import { LOGO_CDLJ_BASE64, SAINTE_FAMILLE_BASE64 } from './headerAssets';
@@ -641,6 +642,7 @@ export function exportFicheLecteur(args: {
     ['Date de naissance', fmtDate(l.date_naissance)],
     ['Grade actuel', gradeNom(l.grade_id)],
     ['Année d\'adhésion', String(l.annee_adhesion ?? '—')],
+    ['Année Catéchétique', libelleAnneeCathechetique(l.annee_cathechetique)],
     ['Adresse', l.adresse ?? '—'],
     ['Contact parent / tuteur', l.contact_parent ?? '—'],
     ['Statut', l.archived ? 'Archivé' : 'Actif'],
@@ -765,12 +767,14 @@ export function exportListeLecteurs(args: {
   fraternite: string | null;
   /** Nom du grade filtré, ou null si « tous ». */
   grade: string | null;
+  /** Année catéchétique filtrée (« Aucun » ou « 1ère Année »…), ou null si toutes. */
+  anneeCathechetique?: string | null;
   /** Texte de recherche saisi (matricule, nom…), '' si aucun. */
   recherche: string;
   statut: 'actifs' | 'archives';
   auteur: string;
 }) {
-  const { lecteurs, grades, fraternites, fraternite, grade, recherche, statut, auteur } =
+  const { lecteurs, grades, fraternites, fraternite, grade, anneeCathechetique, recherche, statut, auteur } =
     args;
   const doc = nouveauDocument();
   const gradeNom = (id: number) =>
@@ -782,6 +786,7 @@ export function exportListeLecteurs(args: {
     statut === 'actifs' ? 'Actifs' : 'Archivés',
     fraternite ?? 'Toutes les fraternités',
     grade ?? 'Tous les grades',
+    anneeCathechetique ? `Année Catéchétique : ${anneeCathechetique}` : null,
     recherche ? `Recherche : « ${recherche} »` : null,
   ]
     .filter(Boolean)
@@ -805,6 +810,7 @@ export function exportListeLecteurs(args: {
       'Fraternité',
       'Naissance',
       'Adhésion',
+      'Année Catéchétique',
       'Contact parent / tuteur',
     ],
   ];
@@ -817,6 +823,7 @@ export function exportListeLecteurs(args: {
     fraterniteNom(l.fraternite_id),
     fmtDate(l.date_naissance),
     l.annee_adhesion ? String(l.annee_adhesion) : '—',
+    libelleAnneeCathechetique(l.annee_cathechetique),
     l.contact_parent ?? '—',
   ]);
 
@@ -826,16 +833,19 @@ export function exportListeLecteurs(args: {
     body,
     styles: { fontSize: 7, cellPadding: 1.2 },
     headStyles: { fillColor: BLEU_CDLJ, fontSize: 7 },
+    // Largeurs recalculées pour 10 colonnes : total 182 mm (largeur utile
+    // portrait), aucune colonne coupée.
     columnStyles: {
       0: { halign: 'right', cellWidth: 8 },
-      1: { cellWidth: 17 },
-      2: { cellWidth: 28 },
-      3: { cellWidth: 26 },
-      4: { cellWidth: 20 },
-      5: { cellWidth: 24 },
-      6: { halign: 'center', cellWidth: 18 },
-      7: { halign: 'center', cellWidth: 16 },
-      8: { cellWidth: 25 },
+      1: { cellWidth: 16 },
+      2: { cellWidth: 24 },
+      3: { cellWidth: 20 },
+      4: { cellWidth: 16 },
+      5: { cellWidth: 20 },
+      6: { halign: 'center', cellWidth: 16 },
+      7: { halign: 'center', cellWidth: 14 },
+      8: { cellWidth: 28 },
+      9: { cellWidth: 20 },
     },
   });
   const finY =
@@ -846,7 +856,7 @@ export function exportListeLecteurs(args: {
   doc.setTextColor(51, 65, 85);
   doc.text(`Total : ${lecteurs.length} lecteur(s)   •   ${filtres}`, 14, finY);
   piedPage(doc);
-  sauvegarderPdf(doc, nomExportPdf('liste_lecteurs', statut, fraternite, grade));
+  sauvegarderPdf(doc, nomExportPdf('liste_lecteurs', statut, fraternite, grade, anneeCathechetique));
 }
 
 // ------------------------------------------------------------------
