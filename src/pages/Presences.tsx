@@ -1,4 +1,4 @@
-import { trierLecteurs } from '../lib/lecteurs';
+import { correspondRecherche, trierLecteurs } from '../lib/lecteurs';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -126,7 +126,11 @@ export default function Presences() {
     setFraternites((rF.data ?? []) as Fraternite[]);
     setPresences((rP.data ?? []) as Presence[]);
     setLoading(false);
-  }, [samedis]);
+    // Un échec de lecture affichait un mois entier sans aucune présence
+    // pointée — indistinguishable d'un mois réellement vierge.
+    const erreur = rL.error || rF.error || rP.error;
+    if (erreur) toast(traduireErreur(erreur, 'charger les présences'), 'err');
+  }, [samedis, toast]);
 
   useEffect(() => {
     setLoading(true);
@@ -149,15 +153,9 @@ export default function Presences() {
   // C'est un confort de LECTURE : cette page n'affiche aucun total, il n'y a
   // donc rien à recompter. Ils réapparaissent en sélectionnant leur fraternité.
   const filtered = useMemo(() => {
-    const q = debouncedSearch.trim().toLowerCase();
-    return filtrerParFraternite(lecteurs, fId, animateurId).filter((l) => {
-      if (!q) return true;
-      return (
-        l.matricule.toLowerCase().includes(q) ||
-        l.nom.toLowerCase().includes(q) ||
-        l.prenom.toLowerCase().includes(q)
-      );
-    });
+    return filtrerParFraternite(lecteurs, fId, animateurId).filter((l) =>
+      correspondRecherche([l.nom, l.prenom, l.matricule], debouncedSearch)
+    );
   }, [lecteurs, fId, animateurId, debouncedSearch]);
 
   /** Samedis déjà arrivés : seuls ceux-là sont comptabilisés. */

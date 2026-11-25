@@ -321,7 +321,38 @@ console.log('\n7. Noms de fichiers : préfixe « lecteur_akogbato », descriptif
   for (const n of [...noms, ...produits.filter((p) => p.suffixe).map((p) => p.nom)]) console.log(`      • ${n}`);
 }
 
-console.log('\n8. Ordre alphabétique imposé par les cinq exports de listes');
+console.log('\n8. Métadonnées : document officiel de la CDLJ');
+{
+  const p = produits.find((x) => x.nom.startsWith('lecteur_akogbato_fiche_lecteur'));
+  // jsPDF écrit « /Producer (jsPDF x.y.z) » en dur et ignore toute surcharge :
+  // on vérifie donc les champs que NOUS maîtrisons (title, author, subject).
+  const info = Buffer.from(p.doc.output(), 'latin1');
+  const champ = (nom) => {
+    const m = new RegExp(`/${nom} \\(`).exec(info.toString('latin1'));
+    if (!m) return '';
+    // jsPDF écrit les chaînes accentuées en UTF-16BE précédé du BOM « þÿ ».
+    const debut = m.index + m[0].length;
+    const fin = info.indexOf(')', debut, 'latin1');
+    const brut = info.subarray(debut, fin);
+    const texte = brut[0] === 0xfe && brut[1] === 0xff
+      ? brut.subarray(2).swap16().toString('utf16le')
+      : brut.toString('latin1').replace(/\\(.)/g, '$1');
+    return texte;
+  };
+  const titre = champ('Title');
+  const auteur = champ('Author');
+  if (/CDLJ/.test(titre))
+    ok('titre du document en français, au nom de la CDLJ');
+  else ko('titre du PDF absent ou générique', titre);
+  if (/Lecteurs Juniors/.test(auteur) && /Akogbato/.test(auteur))
+    ok('auteur en français avec la paroisse');
+  else ko('auteur du PDF absent', auteur);
+  if (/CDLJ/.test(champ('Creator')))
+    ok('créateur renseigné (plus de valeur technique par défaut)');
+  else ko('créateur générique', champ('Creator'));
+}
+
+console.log('\n9. Ordre alphabétique imposé par les cinq exports de listes');
 {
   suffixeNom = '_tri';
   // Matricules volontairement en ordre inverse des noms : tester le nom réel.

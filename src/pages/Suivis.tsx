@@ -149,6 +149,12 @@ export default function Suivis() {
     setLecteurs(trierLecteurs((rL.data ?? []) as Lecteur[]));
     setFraternites((rF.data ?? []) as Fraternite[]);
 
+    // Un échec ici affichait un récapitulatif vide (0 % partout) au lieu
+    // d'une erreur : on prévient explicitement l'utilisateur.
+    if (rL.error || rF.error) {
+      toast(traduireErreur(rL.error || rF.error, 'charger le récapitulatif'), 'err');
+    }
+
     if (samedisPeriode.length === 0) {
       setPresences([]);
       setLoading(false);
@@ -166,7 +172,8 @@ export default function Suivis() {
     );
     setPresences((rP.data ?? []) as Presence[]);
     setLoading(false);
-  }, [samedisPeriode]);
+    if (rP.error) toast(traduireErreur(rP.error, 'charger les présences du récapitulatif'), 'err');
+  }, [samedisPeriode, toast]);
 
   useEffect(() => {
     setLoading(true);

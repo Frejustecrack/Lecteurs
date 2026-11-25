@@ -214,8 +214,25 @@ function sauvegarderPdf(doc: jsPDF, nomFichier: string) {
  * Les tableaux larges (fiches mensuelles, liste des lecteurs) sont
  * dimensionnés colonne par colonne pour tenir dans 182 mm utiles.
  */
+/**
+ * Document A4 portrait avec des métadonnées en français.
+ *
+ * jsPDF renseigne par défaut « Creator: jsPDF » et « Producer: jsPDF » : sur un
+ * document officiel de la CDLJ, cela affichait le nom d'une bibliothèque
+ * technique dans les propriétés du fichier (et dans l'aperçu avant impression
+ * de certains lecteurs PDF). Les métadonnées sont donc posées à la création,
+ * une seule fois, pour les sept exports.
+ */
 function nouveauDocument(): jsPDF {
-  return new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  doc.setProperties({
+    title: 'Document officiel — CDLJ Paroisse Sainte Famille d’Akogbato',
+    subject: 'Œuvre Pontificale de l’Enfance Missionnaire — Communauté Diocésaine des Lecteurs Juniors',
+    author: 'Communauté Diocésaine des Lecteurs Juniors — Paroisse Sainte Famille d’Akogbato',
+    creator: 'CDLJ Akogbato — application de gestion des lecteurs',
+    keywords: 'CDLJ, lecteurs juniors, Akogbato, Cotonou, Sainte Famille',
+  });
+  return doc;
 }
 
 /**

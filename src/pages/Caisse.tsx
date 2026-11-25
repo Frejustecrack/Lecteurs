@@ -134,7 +134,11 @@ export default function Caisse() {
     setOps((rO.data ?? []) as CaisseOperation[]);
     setProfiles((rP.data ?? []) as Profile[]);
     setLoading(false);
-  }, [annee, mois]);
+    // Solde à 0 F sans message = risque de croire la caisse vide alors
+    // qu'une requête a échoué. On signale l'erreur explicitement.
+    const erreur = rCM.error || rTot.error || rAn.error || rO.error || rL.error || rP.error;
+    if (erreur) toast(traduireErreur(erreur, 'charger l’état de caisse'), 'err');
+  }, [annee, mois, toast]);
 
   useEffect(() => {
     setLoading(true);
